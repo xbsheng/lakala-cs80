@@ -47,6 +47,34 @@
 
 **建议：如果自定义页面是核心功能，先选 C 作为过渡；否则 A。**
 
+### 2.2b 变体：Rust + JS 引擎 + Skia Canvas 2D shim
+
+如果“单份组件代码 + 自定义页面”比“纯 Rust”更重要，还有一条路：
+
+```text
+QuickJS/Boa (JS)  ── Canvas 2D 子集 shim ──► skia-safe
+```
+
+- 复用现有 `widgets.js` / `pages/*.js` / `lunar.js` / 数据循环，不重写 17 个组件；
+- 只实现实际用到的 Canvas 2D 子集：路径、文本/measureText、drawImage、渐变、虚线、
+  `globalCompositeOperation`、`roundRect`、save/restore；
+- QuickJS 很小（~1 MB），Boa 纯 Rust 但更重；1 Hz/5 Hz 的脚本量完全跑得动；
+- 难点：JS↔Rust 桥、Promise/fetch/timer/Image/localStorage shim、文本度量、调试。
+
+**和 Rust 重写的取舍：**
+
+| | Rust 重写 17 个组件 | Rust + QuickJS/Canvas shim |
+|---|---|---|
+| 组件代码 | 两套（JS 编辑器 + Rust 设备） | 一套 JS |
+| 自定义页面 | 需另定方案 | 可直接复用 |
+| 开发量 | 17 个组件 + 图表/列表 + 数据循环 | Canvas shim + 运行时/异步/图片桥 |
+| 长期维护 | 每次改两遍 | 改一遍 |
+| 调试 | Rust 原生，简单 | JS 引擎 + FFI，复杂 |
+| 风险 | 视觉漂移、双份代码 | 引擎/桥/Canvas API 覆盖 |
+
+**建议：P0 先花 1 天做 QuickJS + Skia 的最小 spike（画一个 card + 中文 + 渐变），
+和 Rust 重写的 card 对比开发量；如果 shim 顺利，优先走这条，避免永久双份维护。**
+
 ### 2.3 编辑器与屏上一致性
 
 - 必须做 **golden image 测试**：同一份 layout/data，在 Chromium 和 Rust 各渲染一次，
