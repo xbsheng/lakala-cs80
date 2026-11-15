@@ -1,0 +1,8 @@
+[package]
+name = "cs80-renderer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+
+[dependencies]
+skia-safe = { version = "0.157.0", features = ["textlayout", "svg"] }

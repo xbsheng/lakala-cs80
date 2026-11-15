@@ -1,6 +1,6 @@
 # Rust + Skia 设备渲染器（实验分支）
 
-> 状态：设计/骨架阶段。**没有替换现有 Chromium kiosk**，`main` 行为不变。
+> 状态：设计 + P0 spike 完成。**没有替换现有 Chromium kiosk**，`main` 行为不变。
 > 分支：`feat/rust-skia-renderer`
 
 ## 1. 目标与非目标
@@ -34,46 +34,28 @@
 
 **建议：先按 A 做纵切验证；如果视觉/维护成本可接受，再决定是否转 B。**
 
-### 2.2 自定义页面（`panel/web/pages/*.js`）怎么办？
+### 2.2 自定义页面：已决定用 Rust 实现
 
-当前功能允许用户写 ES module 直接画整屏。Rust 不能直接执行 JS。选项：
+不再保留 `panel/web/pages/*.js` 这种 ES module 页面。自定义页面改为 Rust `Page` trait +
+registry，编译进 renderer：
 
-| 方案 | 说明 |
-|---|---|
-| A. 砍掉 | 设备端只支持内置组件；自定义页面仅编辑器预览，不推设备 |
-| B. Rust/WASM 页面 | 新插件 ABI；破坏现有 JS 页面生态 |
-| C. 保留 Chromium 子进程 | 只让 Chromium 跑自定义页面，内置组件走 Rust；没有完全去掉浏览器 |
-| D. 嵌 JS 引擎 | QuickJS/Boa + Canvas 2D shim；复杂度高，不建议 |
-
-**建议：如果自定义页面是核心功能，先选 C 作为过渡；否则 A。**
-
-### 2.2b 变体：Rust + JS 引擎 + Skia Canvas 2D shim
-
-如果“单份组件代码 + 自定义页面”比“纯 Rust”更重要，还有一条路：
-
-```text
-QuickJS/Boa (JS)  ── Canvas 2D 子集 shim ──► skia-safe
+```rust
+pub trait Page {
+    fn needs(&self, cfg: &Value) -> Vec<Need>;
+    fn draw(&self, c: &mut Canvas2D, size: Size, cfg: &Value, data: &Value, t: &Theme);
+}
 ```
 
-- 复用现有 `widgets.js` / `pages/*.js` / `lunar.js` / 数据循环，不重写 17 个组件；
-- 只实现实际用到的 Canvas 2D 子集：路径、文本/measureText、drawImage、渐变、虚线、
-  `globalCompositeOperation`、`roundRect`、save/restore；
-- QuickJS 很小（~1 MB），Boa 纯 Rust 但更重；1 Hz/5 Hz 的脚本量完全跑得动；
-- 难点：JS↔Rust 桥、Promise/fetch/timer/Image/localStorage shim、文本度量、调试。
+- 现有 `pages/stock.js` → `src/pages/stock.rs`，作为第一个 Rust 自定义页面。
+- layout schema 从 `{type:"custom", module:"pages/stock.js"}` 迁移到
+  `{type:"rust", page:"stock", config:{...}}`；`host.py`/编辑器要兼容旧 schema（P4）。
+- 编辑器不再执行自定义页面 JS；自定义页面 tab 显示 Rust renderer 的
+  `GET /preview.png?page=stock&config=...` 预览图，并编辑 config JSON。
+- 页面注册表是静态的（编译期），不是运行时用户上传代码；以后要动态加载，
+  再考虑 `.so`/WASM 插件 ABI。
 
-**和 Rust 重写的取舍：**
-
-| | Rust 重写 17 个组件 | Rust + QuickJS/Canvas shim |
-|---|---|---|
-| 组件代码 | 两套（JS 编辑器 + Rust 设备） | 一套 JS |
-| 自定义页面 | 需另定方案 | 可直接复用 |
-| 开发量 | 17 个组件 + 图表/列表 + 数据循环 | Canvas shim + 运行时/异步/图片桥 |
-| 长期维护 | 每次改两遍 | 改一遍 |
-| 调试 | Rust 原生，简单 | JS 引擎 + FFI，复杂 |
-| 风险 | 视觉漂移、双份代码 | 引擎/桥/Canvas API 覆盖 |
-
-**建议：P0 先花 1 天做 QuickJS + Skia 的最小 spike（画一个 card + 中文 + 渐变），
-和 Rust 重写的 card 对比开发量；如果 shim 顺利，优先走这条，避免永久双份维护。**
+> 已否决：QuickJS/Boa + Canvas shim。自定义页面确定用 Rust，不再保留 JS 页面运行时；
+> 这样可以少一个 JS 引擎/FFI/异步桥。内置组件的编辑器预览仍是 JS（见 2.1）。
 
 ### 2.3 编辑器与屏上一致性
 
@@ -129,6 +111,9 @@ renderer/
       clock.rs clock_dial.rs weather.rs stock.rs kline.rs crypto.rs
       github.rs music.rs timer.rs note.rs news.rs holiday.rs
       ha.rs agent.rs system.rs runcat.rs runcat_bar.rs
+    pages/
+      mod.rs         # Page trait + registry
+      stock.rs       # 原 pages/stock.js
 ```
 
 **Widget trait 草案**
@@ -156,11 +141,11 @@ pub trait Widget {
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| P0 | 装 Rust toolchain + 跑通 `skia-safe` 最小 800×1280 面；渲染 card + 中文 + 渐变 + 圆角 | 编译成功；单帧 PNG 与 Chrome 近似 |
+| P0 | ✅ 已完成：Rust + skia-safe 最小 800×1280 面；card + 中文 + 渐变 + 圆角 + measureText | 单帧 PNG 正常；release 3.7 MB / 13 MB RSS |
 | P1 | 纵切：layout + data + push + `clock_dial` + `ha` | 真机 patch 成功；1 小时内存 <120 MB、CPU <5% 单核；截图 diff 可接受 |
 | P2 | 简单组件：weather/crypto/github/note/timer/holiday/clock | golden test 通过 |
 | P3 | 复杂组件：stock/minute/kline/news/agent/runcat/system/music | 数据/布局/字体 parity |
-| P4 | 自定义页面决策 + 编辑器预览策略 | 功能不回退或明确取舍 |
+| P4 | Rust 自定义页面：Page trait/registry、`stock.rs`、layout schema 迁移、编辑器 `/preview.png` | 自定义页面功能可用；旧 schema 可迁移 |
 | P5 | systemd 服务、回退开关、文档、性能报告 | 可替换 kiosk；保留 Chromium 回退 |
 
 ## 7. 风险
@@ -168,14 +153,40 @@ pub trait Widget {
 - `skia-safe` 首次构建/下载较重；交叉编译到 ARM 需要预编译或源码构建。
 - 字体/emoji/SVG/`measureText` 的观感差异；必须 golden test。
 - 双份绘制代码的长期维护成本（见 2.1）。
-- 自定义页面（见 2.2）是最大产品取舍。
+- 自定义页面改为 Rust 后，layout schema/编辑器预览要迁移；旧 JS 页面不再执行。
 - 17 个组件 + 自定义页 + lunar/交易时段/时区，不是一次小改动；粗估 4–8 周。
 
-## 8. 构建环境（当前机器）
+## 8. 构建环境与本机实测
 
-当前 `cargo` / `rustc` 未安装；`skia-safe` 需要 Rust + C++ 工具链/预编译 Skia。
-P0 第一件事是安装 toolchain 并确认 `skia-safe` 能在本机编译/运行；
-如果本机不适合构建，需要在 CI/开发机构建后交叉验证。
+本机已装好：
+
+- `rustc 1.100.0` / `cargo 1.100.0`（rustup minimal，`RUSTUP_HOME=/root/.rustup`、`CARGO_HOME=/root/.cargo`）
+- `clang 18.1.3`、`libclang-dev`、`ninja 1.12.1`、`libfreetype-dev`、`libfontconfig1-dev`、`pkg-config`、`python3`
+- `skia-safe 0.157.0` + `skia-bindings 0.157.0`：本机没有命中预编译 binary cache，
+  走的是源码构建；首次构建较慢，`target/` 约 1 GB。
+- 构建需要代理时用 `https_proxy=http://127.0.0.1:7890`（本机 mihomo）；仓库里不提交代理配置。
+
+```bash
+cd renderer
+export PATH=/root/.cargo/bin:/usr/local/bin:$PATH
+cargo build --release
+./target/release/cs80-renderer
+```
+
+当前 `src/main.rs` 是 **P0 spike**：画一张 800×1280 的 card，验证中文、圆角、渐变、
+`measure_text`；还没有接 host/设备。P1 会把它替换为真正的 layout/data/push 主循环。
+
+### P0 实测
+
+| 项目 | 结果 |
+|---|---|
+| 面 | 800×1280 N32 premul，PNG 输出正常 |
+| 中文 | 系统 WQY ZenHei，`室内温度`/`17.4°C` 正常 |
+| 圆角/渐变 | `RRect` + `Gradient` 正常 |
+| release 二进制 | 3.7 MB（动态链接 fontconfig/freetype） |
+| release 运行 | 约 0.04 s，max RSS **13.2 MB** |
+| debug 二进制 | 23 MB，max RSS 14.5 MB |
+| 构建 | release 在已有 Skia 构建后约 4 分钟；`target/` 约 1 GB |
 
 ## 9. 回退
 
