@@ -1,6 +1,6 @@
 # Rust + Skia 设备渲染器（实验分支）
 
-> 状态：设计 + P0 spike 完成。**没有替换现有 Chromium kiosk**，`main` 行为不变。
+> 状态：设计 + P0/P1 纵切完成。**没有替换现有 Chromium kiosk**，`main` 行为不变。
 > 分支：`feat/rust-skia-renderer`
 
 ## 1. 目标与非目标
@@ -142,7 +142,7 @@ pub trait Widget {
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | P0 | ✅ 已完成：Rust + skia-safe 最小 800×1280 面；card + 中文 + 渐变 + 圆角 + measureText | 单帧 PNG 正常；release 3.7 MB / 13 MB RSS |
-| P1 | 纵切：layout + data + push + `clock_dial` + `ha` | 真机 patch 成功；1 小时内存 <120 MB、CPU <5% 单核；截图 diff 可接受 |
+| P1 | ✅ 已完成：layout + data + push + `clock_dial` + `ha` + `/preview.png` | 真机 full/patch 均 `ok=true`；1 Hz 下 RSS 16.7 MB / CPU 3.8%；截图与 Chrome 基本一致 |
 | P2 | 简单组件：weather/crypto/github/note/timer/holiday/clock | golden test 通过 |
 | P3 | 复杂组件：stock/minute/kline/news/agent/runcat/system/music | 数据/布局/字体 parity |
 | P4 | Rust 自定义页面：Page trait/registry、`stock.rs`、layout schema 迁移、编辑器 `/preview.png` | 自定义页面功能可用；旧 schema 可迁移 |
@@ -173,8 +173,9 @@ cargo build --release
 ./target/release/cs80-renderer
 ```
 
-当前 `src/main.rs` 是 **P0 spike**：画一张 800×1280 的 card，验证中文、圆角、渐变、
-`measure_text`；还没有接 host/设备。P1 会把它替换为真正的 layout/data/push 主循环。
+当前 `src/main.rs` 是 **P1 纵切**：读 layout（本地/`/api/layout`）、按 `needs` 拉
+`/api/data/*`、渲染 `clock_dial` + `ha`、输出 `/preview.png`，并可选 `--push` 推真机。
+其余组件暂时画 placeholder；P2/P3 逐步替换。
 
 ### P0 实测
 
@@ -187,6 +188,29 @@ cargo build --release
 | release 运行 | 约 0.04 s，max RSS **13.2 MB** |
 | debug 二进制 | 23 MB，max RSS 14.5 MB |
 | 构建 | release 在已有 Skia 构建后约 4 分钟；`target/` 约 1 GB |
+
+### P1 实测（clock_dial + HA 纵切）
+
+```bash
+cd renderer
+# 单帧 PNG
+cargo run --release -- --layout test-layout.json --once --out /tmp/cs80-rust-p1.png
+# 预览服务
+cargo run --release -- --layout test-layout.json --preview-port 8788 --fps 1
+# 真机推送（先停 cs80-kiosk，避免双端抢帧）
+cargo run --release -- --layout test-layout.json --push --preview-port 0 --fps 1
+```
+
+| 项目 | 结果 |
+|---|---|
+| 测试布局 | `renderer/test-layout.json`：3×2 表盘 + 5×2 HA，其余留空 |
+| 数据 | host `/api/data/weather`、`/api/data/ha`；TTL 缓存 |
+| 预览 | `GET http://127.0.0.1:8788/preview.png`，约 60 KB |
+| 真机 full frame | host `/api/frame` 返回 `ok=true` |
+| 真机 patch | 后续 1 Hz 帧 `/api/patch` 连续 `ok=true`，`session` 保持 1 |
+| release 二进制 | 7.2 MB |
+| 运行占用（2 个组件，1 Hz） | max RSS **16.7 MB**，CPU **3.8% 单核** |
+| 与 Chrome 对比 | 表盘/HA 布局基本一致；差异主要是字体（WQY vs 浏览器 fallback）、HA `⚡` 图标未画 |
 
 ## 9. 回退
 

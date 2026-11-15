@@ -1,0 +1,48 @@
+{
+ "version": 2,
+ "activePage": "main",
+ "pages": [
+  {
+   "id": "main",
+   "name": "P1",
+   "type": "grid",
+   "widgets": [
+    {
+     "id": "clock",
+     "type": "clock_dial",
+     "cell": [
+      0,
+      0,
+      3,
+      2
+     ],
+     "config": {
+      "city": "北京",
+      "showWeather": true
+     }
+    },
+    {
+     "id": "ha-home",
+     "type": "ha",
+     "cell": [
+      0,
+      2,
+      5,
+      2
+     ],
+     "config": {
+      "title": "家里",
+      "temp": "sensor.miaomiaoc_cn_blt_3_1i8rd4qnskg01_t9_temperature_p_3_1001",
+      "humidity": "sensor.miaomiaoc_cn_blt_3_1i8rd4qnskg01_t9_relative_humidity_p_3_1002",
+      "air": "weather.forecast_wo_de_jia",
+      "climate": "climate.lumi_cn_878023694_mcn02",
+      "switches": "switch.cuco_cn_482765218_cp2a_on_p_2_1,switch.iot_cn_1115858637_tdq3_on_p_2_1",
+      "power": "sensor.lumi_cn_878023694_mcn02_electric_power_p_5_1",
+      "media": "media_player.xiaomi_cn_444227847_l15a",
+      "chips": "climate,switches,media"
+     }
+    }
+   ]
+  }
+ ]
+}
