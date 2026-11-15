@@ -26,6 +26,8 @@ pub struct Page {
     pub config: Value,
     #[serde(default)]
     pub module: Option<String>,
+    #[serde(default)]
+    pub page: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

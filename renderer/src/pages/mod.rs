@@ -10,8 +10,9 @@ use crate::theme::Theme;
 
 pub fn rust_page(page: &LayoutPage) -> Option<&'static dyn RustPage> {
     let module = page.module.as_deref().unwrap_or("");
+    let page_name = page.page.as_deref().unwrap_or("");
     if page.kind == "rust" || page.kind == "custom" {
-        if module.ends_with("stock.js") || page.id == "stockpage" {
+        if page_name == "stock" || module.ends_with("stock.js") || page.id == "stockpage" {
             return Some(&stock::STOCK);
         }
     }
