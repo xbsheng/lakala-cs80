@@ -56,6 +56,15 @@ impl DataStore {
         Ok(v)
     }
 
+    pub fn screensaver(&self) -> anyhow::Result<Value> {
+        let v = self
+            .agent
+            .get(&format!("{}/api/screensaver", self.host))
+            .call()?
+            .into_json::<Value>()?;
+        Ok(v)
+    }
+
     pub fn get(&mut self, need: &Need) -> Value {
         let mut query = need.query.clone();
         query.sort();

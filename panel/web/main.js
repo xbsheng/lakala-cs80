@@ -10,6 +10,26 @@ const KIOSK = QS.has("kiosk");
 const EDIT_ONLY = !!window.__CS80_HEADLESS__ && !KIOSK;
 if (EDIT_ONLY) pusher.paused = true;  // 无桌面主机：浏览器只编辑，推帧交给后台 kiosk
 
+// 如果本机 Rust renderer 的 preview server 在跑，设备由它推；浏览器不要和它抢 USB。
+if (!EDIT_ONLY) {
+  const previewBase = `${location.protocol}//${location.hostname}:8788`;
+  fetch(`${previewBase}/health`, { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((j) => {
+      if (!j || !j.ok) return;
+      pusher.paused = true;
+      const b = el('#btn-pause');
+      if (b) {
+        b.disabled = true;
+        b.classList.add('primary');
+        b.textContent = 'Rust 推屏中';
+        b.title = '设备由 Rust renderer 推送；这里只编辑布局';
+      }
+      toast('Rust renderer 正在推屏，编辑器已暂停推送');
+    })
+    .catch(() => {});
+}
+
 function paintStats(st) {
   const pill = el('#push-pill');
   if (st.kind === 'error') {

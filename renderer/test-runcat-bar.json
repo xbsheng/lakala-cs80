@@ -1,0 +1,4 @@
+{"version":2,"activePage":"main","pages":[{"id":"main","name":"bar","type":"grid","widgets":[
+ {"id":"runcat_bar","type":"runcat_bar","cell":[0,0,5,2],"config":{}},
+ {"id":"system","type":"system","cell":[0,2,2,2],"config":{}}
+]}]}

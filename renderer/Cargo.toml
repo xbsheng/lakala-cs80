@@ -7,6 +7,7 @@ rust-version = "1.87"
 [dependencies]
 anyhow = "1"
 chrono = "0.4"
+chrono-tz = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 skia-safe = { version = "0.157.0", features = ["textlayout", "svg"] }

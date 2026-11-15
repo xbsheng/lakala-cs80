@@ -1,0 +1,22 @@
+[Unit]
+Description=CS80 Rust renderer (skia-safe / device push / preview)
+After=network.target cs80-panel.service
+Wants=cs80-panel.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/lakala-cs80/renderer
+Environment=CS80_WEB=/root/lakala-cs80/panel/web
+ExecStart=/root/lakala-cs80/renderer/target/release/cs80-renderer \
+  --host http://127.0.0.1:8787 \
+  --push --preview-port 8788 --preview-bind 0.0.0.0 --fps 1
+Restart=always
+RestartSec=3
+MemoryMax=512M
+KillSignal=SIGTERM
+TimeoutStopSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

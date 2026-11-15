@@ -1,7 +1,8 @@
 use skia_safe::{
+    gradient::{Colors, Gradient, Interpolation},
     paint::{Cap, Join},
-    Canvas, Color, Data, Font, FontMgr, FontStyle, Paint, PaintStyle, PathBuilder, PathEffect, RRect,
-    Rect, Typeface,
+    shaders, Canvas, Color, Data, Font, FontMgr, FontStyle, Image, Paint, PaintStyle, PathBuilder,
+    PathEffect, Point, RRect, Rect, TileMode, Typeface,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -261,6 +262,73 @@ impl<'a> Canvas2D<'a> {
         self.canvas.draw_circle((cx, cy), r, &self.fill_paint());
     }
 
+    pub fn stroke_arc(&mut self, cx: f32, cy: f32, r: f32, start_deg: f32, sweep_deg: f32) {
+        let oval = Rect::from_xywh(cx - r, cy - r, r * 2.0, r * 2.0);
+        self.canvas
+            .draw_arc(oval, start_deg, sweep_deg, false, &self.stroke_paint());
+    }
+
+    pub fn stroke_polyline(&mut self, pts: &[(f32, f32)]) {
+        if pts.len() < 2 {
+            return;
+        }
+        let mut pb = PathBuilder::new();
+        pb.move_to(pts[0]);
+        for p in &pts[1..] {
+            pb.line_to(*p);
+        }
+        let path = pb.detach();
+        self.canvas.draw_path(&path, &self.stroke_paint());
+    }
+
+    /// 折线下方填充：从 baseline_y 到曲线，颜色从 top_color 渐隐到底部透明。
+    pub fn fill_area_gradient(
+        &mut self,
+        pts: &[(f32, f32)],
+        baseline_y: f32,
+        top_color: Color,
+        bottom_color: Color,
+        top_y: f32,
+        bottom_y: f32,
+    ) {
+        if pts.len() < 2 {
+            return;
+        }
+        let mut pb = PathBuilder::new();
+        pb.move_to(pts[0]);
+        for p in &pts[1..] {
+            pb.line_to(*p);
+        }
+        pb.line_to((pts[pts.len() - 1].0, baseline_y));
+        pb.line_to((pts[0].0, baseline_y));
+        pb.close();
+        let path = pb.detach();
+        let colors = [top_color.into(), bottom_color.into()];
+        let gc = Colors::new_evenly_spaced(&colors, TileMode::Clamp, None);
+        let grad = Gradient::new(gc, Interpolation::default());
+        let shader = shaders::linear_gradient(
+            (Point::new(0.0, top_y), Point::new(0.0, bottom_y)),
+            &grad,
+            None,
+        );
+        let mut p = Paint::default();
+        p.set_anti_alias(true);
+        if let Some(shader) = shader {
+            p.set_shader(shader);
+        } else {
+            p.set_color(top_color);
+        }
+        self.canvas.draw_path(&path, &p);
+    }
+
+    pub fn draw_image(&mut self, img: &Image, x: f32, y: f32, w: f32, h: f32) {
+        let mut p = Paint::default();
+        p.set_anti_alias(true);
+        p.set_alpha_f(self.alpha);
+        self.canvas
+            .draw_image_rect(img, None, Rect::from_xywh(x, y, w, h), &p);
+    }
+
     pub fn fill_polygon(&mut self, pts: &[(f32, f32)]) {
         if pts.len() < 2 {
             return;
@@ -279,13 +347,21 @@ impl<'a> Canvas2D<'a> {
         self.canvas.draw_circle((cx, cy), r, &self.stroke_paint());
     }
 
-    pub fn measure_text(&self, text: &str) -> f32 {
-        let paint = self.fill_paint();
-        self.font.measure_text(text, Some(&paint)).0
+    fn font_for(&self, text: &str) -> Font {
+        if self.mono && text.chars().any(|c| !c.is_ascii()) {
+            self.fonts.font(self.font_size, self.font_weight, false)
+        } else {
+            self.fonts.font(self.font_size, self.font_weight, self.mono)
+        }
     }
 
-    fn baseline_y(&self, y: f32) -> f32 {
-        let (_, m) = self.font.metrics();
+    pub fn measure_text(&self, text: &str) -> f32 {
+        let paint = self.fill_paint();
+        self.font_for(text).measure_text(text, Some(&paint)).0
+    }
+
+    fn baseline_y_for(&self, font: &Font, y: f32) -> f32 {
+        let (_, m) = font.metrics();
         match self.baseline {
             Baseline::Top => y - m.ascent,
             Baseline::Middle => y - (m.ascent + m.descent) / 2.0,
@@ -295,15 +371,19 @@ impl<'a> Canvas2D<'a> {
     }
 
     pub fn fill_text(&mut self, text: &str, x: f32, y: f32) {
-        let w = self.measure_text(text);
+        let font = self.font_for(text);
+        let w = {
+            let paint = self.fill_paint();
+            font.measure_text(text, Some(&paint)).0
+        };
         let x = match self.align {
             Align::Left => x,
             Align::Center => x - w / 2.0,
             Align::Right => x - w,
         };
-        let y = self.baseline_y(y);
+        let y = self.baseline_y_for(&font, y);
         self.canvas
-            .draw_str(text, (x, y), &self.font, &self.fill_paint());
+            .draw_str(text, (x, y), &font, &self.fill_paint());
     }
 
     /// Canvas 2D 没有 letter-spacing，这里逐字画。
@@ -322,15 +402,14 @@ impl<'a> Canvas2D<'a> {
             Align::Center => x - total / 2.0,
             Align::Right => x - total,
         };
-        let old_align = self.align;
-        self.align = Align::Left;
-        let by = self.baseline_y(y);
         for (ch, w) in chars.iter().zip(widths.iter()) {
+            let text = ch.to_string();
+            let font = self.font_for(&text);
+            let by = self.baseline_y_for(&font, y);
             self.canvas
-                .draw_str(ch.to_string(), (cx, by), &self.font, &self.fill_paint());
+                .draw_str(&text, (cx, by), &font, &self.fill_paint());
             cx += *w + spacing;
         }
-        self.align = old_align;
     }
 
     pub fn ellipsis(&mut self, text: &str, max_w: f32) -> String {

@@ -1,6 +1,6 @@
 # Rust + Skia 设备渲染器（实验分支）
 
-> 状态：设计 + P0/P1 纵切完成。**没有替换现有 Chromium kiosk**，`main` 行为不变。
+> 状态：P0–P5 完成。Linux 设备端已切换到 `cs80-renderer`；`cs80-kiosk` 保留为回退。
 > 分支：`feat/rust-skia-renderer`
 
 ## 1. 目标与非目标
@@ -143,10 +143,10 @@ pub trait Widget {
 |---|---|---|
 | P0 | ✅ 已完成：Rust + skia-safe 最小 800×1280 面；card + 中文 + 渐变 + 圆角 + measureText | 单帧 PNG 正常；release 3.7 MB / 13 MB RSS |
 | P1 | ✅ 已完成：layout + data + push + `clock_dial` + `ha` + `/preview.png` | 真机 full/patch 均 `ok=true`；1 Hz 下 RSS 16.7 MB / CPU 3.8%；截图与 Chrome 基本一致 |
-| P2 | 简单组件：weather/crypto/github/note/timer/holiday/clock | golden test 通过 |
-| P3 | 复杂组件：stock/minute/kline/news/agent/runcat/system/music | 数据/布局/字体 parity |
-| P4 | Rust 自定义页面：Page trait/registry、`stock.rs`、layout schema 迁移、编辑器 `/preview.png` | 自定义页面功能可用；旧 schema 可迁移 |
-| P5 | systemd 服务、回退开关、文档、性能报告 | 可替换 kiosk；保留 Chromium 回退 |
+| P2 | ✅ 完成：clock/weather/crypto/github/music/timer/note/holiday | 已出图验证 |
+| P3 | ✅ 完成：stock/kline/news/agent/runcat/runcat_bar/system | 已出图验证；kline/crypto 数据源依赖 host |
+| P4 | ✅ 完成：Page trait/registry、`stock.rs`、编辑器 `/preview.png`、浏览器推帧让位 | Rust 自定义页面可用 |
+| P5 | ✅ 完成：`deploy/cs80-renderer.service`、切换/回退、文档 | 已在本机切换；kiosk 可回退 |
 
 ## 7. 风险
 
@@ -211,6 +211,50 @@ cargo run --release -- --layout test-layout.json --push --preview-port 0 --fps 1
 | release 二进制 | 7.2 MB |
 | 运行占用（2 个组件，1 Hz） | max RSS **16.7 MB**，CPU **3.8% 单核** |
 | 与 Chrome 对比 | 表盘/HA 布局基本一致；差异主要是字体（WQY vs 浏览器 fallback）、HA `⚡` 图标未画 |
+
+## 9. P2–P5 结果与切换
+
+**组件覆盖**
+
+- 17 个内置组件全部移植：`clock` / `clock_dial` / `weather` / `stock` / `kline` /
+  `crypto` / `github` / `music` / `timer` / `note` / `news` / `holiday` / `agent` /
+  `system` / `runcat` / `runcat_bar` / `ha`
+- 自定义页面 `stockpage` → `src/pages/stock.rs`（Rust `RustPage` registry）
+- 测试布局：`renderer/test-layout.json`、`test-p2.json`、`test-p3.json`、`test-page.json`、`test-runcat-bar.json`
+
+**本机实测（live layout，1 Hz）**
+
+| 项目 | 结果 |
+|---|---|
+| 进程 | `/root/lakala-cs80/renderer/target/release/cs80-renderer` |
+| RSS | 约 **38 MB** |
+| CPU | 约 **7% 单核**（整页含 news/stock/HA/runCat） |
+| 设备链路 | `/api/frame` 首次、`/api/patch` 1 Hz；`session=1`、`last=patch`、`ok=1` |
+| 预览 | `http://<host>:8788/preview.png`；`/preview/page?page=stockpage` 可预览自定义页 |
+| 浏览器 | `cs80-kiosk` 已 stop + disable；编辑器健康检查发现 8788 后自动暂停 pusher |
+
+**编辑器**
+
+- grid 组件仍是浏览器 JS 预览 + 属性面板；设备端 Rust。
+- 自定义页面预览改为 Rust `preview/page` + `preview.png`，不再执行 `pages/*.js` 的 `draw`。
+- 浏览器 pusher 启动时探测 `:8788/health`；Rust renderer 在跑就暂停，避免双端抢 USB。
+- `pages/stock.js` 只保留给旧 Chromium kiosk 回退；Rust 设备用 `pages/stock.rs`。
+
+**切换/回退**
+
+```bash
+# 切到 Rust renderer（当前状态）
+sudo systemctl disable --now cs80-kiosk
+sudo systemctl enable --now cs80-renderer
+journalctl -u cs80-renderer -f
+
+# 回退 Chromium
+sudo systemctl disable --now cs80-renderer
+sudo systemctl enable --now cs80-kiosk
+```
+
+服务文件：`deploy/cs80-renderer.service`；二进制：`renderer/target/release/cs80-renderer`。
+屏保期间 renderer 轮询 `/api/screensaver`，`saver.playing` 时暂停推帧，结束后整帧恢复。
 
 ## 9. 回退
 

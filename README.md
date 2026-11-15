@@ -11,13 +11,17 @@
 按 32×16 tile 差分推给 `qdc1`（独占 USB 的 C sidecar），后者 LZ4 压缩后走 QDC1 协议送到屏上；
 数据源、屏保、音频都在 host 侧，整条链路本地闭环，不依赖任何云服务。
 
+Linux 无桌面设备端从 2026-11 起默认改为 **`renderer/` 的 Rust + skia-safe 渲染器**直接推帧，
+`cs80-kiosk` 的 headless Chromium 保留为回退；编辑器仍在浏览器，自定义页面改为 Rust `RustPage`，
+预览走 renderer 的 `http://<host>:8788/preview.png`。切换/回退见 [`renderer/README.md`](renderer/README.md)。
+
 ## 能做什么
 
 | 能力 | 说明 |
 |---|---|
 | 画布 | 5×8 网格（每格 160 px），组件拖拽/缩放/复制，多画布 tab 切换 |
 | 组件 | 时钟、时钟（表盘/LCD 数码管）、股票（A 股/美股/期货按时段自动切）、K 线、加密、GitHub、天气、电脑指标、Agent、RunCat、RunCat 条、音乐、倒计时、便签、资讯、假期倒计时、Home Assistant 概览 |
-| 自定义页面 | 写一个 ES 模块直接画整屏（示例：自选股 + 分时图，见 `panel/web/pages/stock.js`） |
+| 自定义页面 | Rust `RustPage` 直接画整屏（示例：自选股 + 分时图，见 `renderer/src/pages/stock.rs`）；旧 JS 页面仅 kiosk 回退 |
 | Agent 状态 | 自动扫描本机 Pi / Claude Code / Codex / DeepSeek Harness 的会话，列表按「运行中 → 等待 → 结束」排序，可逐条隐藏 |
 | 屏保 | 选视频（内置 `wallpaper.mp4`，也可用 `panel/add-screensaver.sh` 转自己的），手动播或锁屏自动播 |
 | 控屏 | 亮度（5–100）、待机/唤醒、设备状态回读 |

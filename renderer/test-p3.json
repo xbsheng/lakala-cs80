@@ -1,0 +1,12 @@
+{
+  "version": 2, "activePage": "main",
+  "pages": [{"id":"main","name":"P3","type":"grid","widgets":[
+    {"id":"clock","type":"clock_dial","cell":[0,0,3,2],"config":{"city":"北京","showWeather":true}},
+    {"id":"runcat","type":"runcat","cell":[3,0,2,2],"config":{}},
+    {"id":"stock","type":"stock","cell":[0,2,5,2],"config":{"symbols":"sz002654,sh600641","usFut":"103.ES00Y,103.NQ00Y"}},
+    {"id":"kline","type":"kline","cell":[0,4,2,2],"config":{"symbol":"sh000001"}},
+    {"id":"news","type":"news","cell":[2,4,3,2],"config":{"sources":["weibo","wscn","toutiao"],"rotate":60}},
+    {"id":"agent","type":"agent","cell":[0,6,3,2],"config":{}},
+    {"id":"system","type":"system","cell":[3,6,2,2],"config":{}}
+  ]}]
+}

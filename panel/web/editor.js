@@ -48,6 +48,8 @@ let hooks = {};
 let readOnly = false;   // kiosk：只渲染，不写布局、不触发拖拽
 let saveTimer = null;
 let customCanvas = null;
+let customPreviewTimer = null;
+let customPreviewBusy = false;
 let dragging = false;
 const interacting = () => dragging;
 
@@ -97,29 +99,39 @@ export function renderTile(w) {
 }
 
 async function renderCustomPreview(page) {
-  if (!customCanvas) return;
+  if (!customCanvas || customPreviewBusy) return;
+  customPreviewBusy = true;
   if (customCanvas.width !== W || customCanvas.height !== H) {
     customCanvas.width = W;
     customCanvas.height = H;
   }
   const ctx = customCanvas.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = (state.layout.theme || {}).bg || THEME.bg;
-  ctx.fillRect(0, 0, W, H);
-  const mod = await loadPageModule(page);
-  if (!mod || !mod.draw) {
-    ctx.fillStyle = '#ffd7d7';
-    ctx.font = '400 20px -apple-system, sans-serif';
-    ctx.fillText('模块加载失败：' + (page.module || ''), 40, 60);
-    return;
-  }
+  const base = `${location.protocol}//${location.hostname}:8788`;
   try {
-    mod.draw(ctx, { w: W, h: H }, state.data[page.id], page.config || {}, state.layout.theme || THEME);
+    // 只让 Rust renderer 画这一页；它不影响设备正在推的 active page。
+    await fetch(`${base}/preview/page?page=${encodeURIComponent(page.id)}`, {
+      method: 'POST', cache: 'no-store',
+    });
+    // renderer 1 Hz；等它重画一帧再取图。
+    await new Promise((r) => setTimeout(r, 1100));
+    const res = await fetch(`${base}/preview.png?t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const bmp = await createImageBitmap(await res.blob());
+    ctx.drawImage(bmp, 0, 0);
   } catch (e) {
+    ctx.fillStyle = (state.layout.theme || {}).bg || THEME.bg;
+    ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#ffd7d7';
-    ctx.font = '400 20px -apple-system, sans-serif';
-    ctx.fillText('绘制报错：' + String(e).slice(0, 70), 40, 60);
-    console.error('[page draw]', e);
+    ctx.font = '400 20px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('Rust renderer 未运行 / preview 不可用', 40, 60);
+    ctx.fillStyle = '#8b8c96';
+    ctx.font = '400 15px ui-monospace, monospace';
+    ctx.fillText(String(e).slice(0, 90), 40, 92);
+  } finally {
+    customPreviewBusy = false;
   }
 }
 
@@ -128,9 +140,9 @@ export async function renderAll() {
   if (!page) return;
   if (page.type === 'grid') {
     for (const w of page.widgets) renderTile(w);
-  } else {
-    await renderCustomPreview(page);
   }
+  // custom 页面由 Rust renderer 的 /preview.png 刷新（mountCustom 里的 timer），
+  // 不跟随 200ms 的 grid tick；否则会把预览图每 200ms 清掉。
 }
 
 function scheduleSave() {
@@ -294,11 +306,21 @@ function mountCustom() {
   }
   tiles.clear();
   el('#grid').innerHTML = '';
+  clearInterval(customPreviewTimer);
+  customPreviewTimer = null;
   el('#board').hidden = true;
   el('#custom-holder').hidden = false;
   customCanvas = el('#custom-canvas');
   applyZoom(state.zoom);
+  const ctx = customCanvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = (state.layout.theme || {}).bg || THEME.bg;
+  ctx.fillRect(0, 0, W, H);
   renderCustomPreview(activePage());
+  customPreviewTimer = setInterval(() => {
+    const p = activePage();
+    if (p && p.type === 'custom') renderCustomPreview(p);
+  }, 2500);
 }
 
 async function mountActivePage() {

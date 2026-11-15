@@ -1,0 +1,1 @@
+{"version":2,"activePage":"stockpage","pages":[{"id":"stockpage","name":"股票自选","type":"custom","module":"pages/stock.js","config":{"symbols":"sh000001,sz399001","title":"自选股"}}]}

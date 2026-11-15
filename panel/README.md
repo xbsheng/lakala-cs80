@@ -5,6 +5,9 @@
    浏览器画布 800×1280（编辑器 = 预览 = 设备像素源）
    │ 每次只把脏的 32×16 tile 发出去
    ▼
+（Linux 设备端 2026-11 起：../renderer/ 的 Rust + skia-safe 直接画帧并 POST /api/frame|patch；
+下方 headless Chromium 的 kiosk 仅作回退。编辑器/自定义页面预览仍走浏览器，见 ../renderer/README.md）
+
 host.py  ── 独占 USB 的常驻进程（HTTP :8787 + 数据源 + 屏保 + 锁屏监听）
    │ stdin 二进制消息：整帧 RGB / 局部 tile / 控屏 / 屏保整帧 / 音频（type 7·8·9）
    ▼
