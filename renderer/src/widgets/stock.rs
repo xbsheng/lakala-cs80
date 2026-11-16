@@ -1,10 +1,10 @@
 use serde_json::Value;
-use skia_safe::Rect;
+use skia_safe::{Color, Rect};
 
 use crate::canvas::{Align, Baseline, Canvas2D};
 use crate::data::Need;
 use crate::theme::Theme;
-use crate::widgets::common::{card, fresh_stamp, stock_poll_ttl, stock_row, stock_session, stock_symbols};
+use crate::widgets::common::{card, fresh_stamp_stock, stock_poll_ttl, stock_polling, stock_row, stock_session, stock_symbols};
 
 pub fn needs(cfg: &Value) -> Vec<Need> {
     vec![Need::new(
@@ -19,9 +19,13 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme) {
     let session = stock_session();
     let title = cfg.get("title").and_then(Value::as_str)
         .unwrap_or(if cfg.get("us").is_some() || cfg.get("usFut").is_some() { session.label } else { "股票" });
-    let stamp = fresh_stamp(d);
+    let stamp = fresh_stamp_stock(d, stock_polling());
     let meta = stamp.as_ref().map(|(s, _)| s.as_str()).unwrap_or("");
-    let meta_color = stamp.as_ref().map(|(_, c)| *c).unwrap_or(t.fg4);
+    let meta_color = stamp
+        .as_ref()
+        .map(|(_, c)| *c)
+        .filter(|c| *c != Color::TRANSPARENT)
+        .unwrap_or(t.fg4);
     let inner = card(c, r, t, title, meta, meta_color, pad);
     let Some(items) = d.get("items").and_then(Value::as_array) else {
         c.set_fill(t.fg4);

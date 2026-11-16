@@ -15,7 +15,7 @@ const FG3 = '#8b8c96';
 const FG4 = '#52535c';
 const CARD = '#1a1c22';
 
-import { minuteChart, stockRow, tradingHours, freshStamp, minuteSlots } from '../widgets.js';
+import { minuteChart, stockRow, stockRangeTags, stockStamp, stockPolling, tradingHours, minuteSlots } from '../widgets.js';
 
 const font = (size, weight = 400, mono = false) => `${weight} ${size}px ${mono ? MONO : FONT}`;
 
@@ -54,8 +54,8 @@ export default {
     ctx.fillStyle = FG4;
     ctx.font = font(20, 600);
     tracked(ctx, (cfg.title || '自选股').toUpperCase(), pad, pad, 2.6);
-    // 数据新鲜度：休盘时停在收盘价，拉失败则标黄
-    const stamp = freshStamp(data);
+    // 数据新鲜度：轮询中“5s前更新”，休盘/午休“10:28更新”，拉失败标黄
+    const stamp = stockStamp(data, stockPolling());
     if (stamp) {
       ctx.textAlign = 'left';
       ctx.font = font(18, 400, true);
@@ -112,14 +112,16 @@ export default {
     ctx.font = font(19, 400, true);
     ctx.fillText(`昨收 ${Number(lead.preClose ?? lead.prev ?? 0).toFixed(2)}`, pad + 28, priceY + 92);
 
+    const chart = { x: pad + 28, y: cardY + 186, w: w - pad * 2 - 56, h: cardH - 202 };
     minuteChart(
       ctx,
-      { x: pad + 28, y: cardY + 186, w: w - pad * 2 - 56, h: cardH - 202 },
+      chart,
       lead.points,
       lead.preClose ?? lead.prev,
       color,
       minuteSlots(lead.symbol)
     );
+    stockRangeTags(ctx, chart, lead, theme || { cardHi: CARD, fg3: FG3 }, 15);
 
     // 其余标的：一行一只，和网格里的股票组件同一套画法
     const rest = items.slice(1);

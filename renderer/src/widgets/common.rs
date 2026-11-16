@@ -176,6 +176,35 @@ pub fn fresh_stamp(d: &Value) -> Option<(String, Color)> {
     }
 }
 
+/// 股票组件专用：轮询中显示“5s前更新”，停盘/午休显示“10:28更新”。
+pub fn fresh_stamp_stock(d: &Value, polling: bool) -> Option<(String, Color)> {
+    let ms = d.get("fetchedAt")?.as_i64()?;
+    if d.get("stale").and_then(Value::as_bool).unwrap_or(false) {
+        return Some(("更新失败·重取中".into(), Color::from_rgb(0xfa, 0xbe, 0x46)));
+    }
+    let at = Local.timestamp_millis_opt(ms).single()?;
+    if polling {
+        let secs = ((now_ms() - ms).max(0) / 1000) as i64;
+        let text = if secs < 1 {
+            "刚刚更新".to_string()
+        } else if secs < 60 {
+            format!("{secs}s前更新")
+        } else if secs < 3600 {
+            format!("{}m前更新", secs / 60)
+        } else {
+            format!("{}h前更新", secs / 3600)
+        };
+        Some((text, Color::TRANSPARENT))
+    } else {
+        let today = Local::now().date_naive() == at.date_naive();
+        if today {
+            Some((format!("{}更新", at.format("%H:%M")), Color::TRANSPARENT))
+        } else {
+            Some((format!("{}更新", at.format("%-m/%-d %H:%M")), Color::TRANSPARENT))
+        }
+    }
+}
+
 pub struct StockSession {
     pub id: &'static str,
     pub label: &'static str,
@@ -202,22 +231,31 @@ pub fn stock_session() -> StockSession {
     StockSession { id: "fut", label: "美股期货" }
 }
 
-/// A 股午休（11:30–13:00）时把 portfolio 的 TTL 拉到 13:00，避免午休轮询；
-/// 13:00 后恢复 15s。启动时若午休且无缓存，仍会拉一次当天数据。
-pub fn stock_poll_ttl_or(normal_secs: u64) -> Duration {
+fn cn_lunch_remaining() -> Option<Duration> {
     let cn = Utc::now().with_timezone(&chrono_tz::Asia::Shanghai);
     let day = cn.weekday().num_days_from_sunday() as i32;
     let min = cn.hour() as i32 * 60 + cn.minute() as i32;
     if (1..=5).contains(&day) && (690..780).contains(&min) {
         let secs = (780 - min) * 60 - cn.second() as i32;
-        Duration::from_secs(secs.max(1) as u64)
+        Some(Duration::from_secs(secs.max(1) as u64))
     } else {
-        Duration::from_secs(normal_secs)
+        None
     }
+}
+
+/// A 股午休（11:30–13:00）时把 portfolio 的 TTL 拉到 13:00，避免午休轮询；
+/// 13:00 后恢复 15s。启动时若午休且无缓存，仍会拉一次当天数据。
+pub fn stock_poll_ttl_or(normal_secs: u64) -> Duration {
+    cn_lunch_remaining().unwrap_or_else(|| Duration::from_secs(normal_secs))
 }
 
 pub fn stock_poll_ttl() -> Duration {
     stock_poll_ttl_or(15)
+}
+
+/// 当前股票组件是否处于轮询状态：A 股午休为 false，其余交易时段/期货为 true。
+pub fn stock_polling() -> bool {
+    stock_session().id != "cn" || cn_lunch_remaining().is_none()
 }
 
 pub fn stock_symbols(cfg: &Value) -> String {
@@ -532,30 +570,45 @@ pub fn stock_row(c: &mut Canvas2D, r: Rect, item: &Value, t: &Theme, card: bool,
         let pre = item.get("preClose").and_then(Value::as_f64)
             .or_else(|| item.get("prev").and_then(Value::as_f64))
             .unwrap_or(0.0);
+        let chart = Rect::from_xywh(sx, r.top + r.height() * 0.2, sw, r.height() * 0.62);
         minute_chart(
             c,
-            Rect::from_xywh(sx, r.top + r.height() * 0.2, sw, r.height() * 0.62),
+            chart,
             &points,
             pre,
             color,
             slots.unwrap_or(points.len() as f32),
         );
+        chart_range_tags(c, chart, item, t, (r.height() * 0.11).clamp(9.0, 13.0));
     }
+}
 
-    // 本时段最高/最低：小字放在分时图下方，不抢价格和曲线
+/// 分时图左上角/左下角的高/低标签，像坐标轴的两个极值点。
+pub fn chart_range_tags(c: &mut Canvas2D, chart: Rect, item: &Value, t: &Theme, font_size: f32) {
     let high = item.get("high").and_then(Value::as_f64);
     let low = item.get("low").and_then(Value::as_f64);
-    if high.is_some() || low.is_some() {
+    if high.is_none() && low.is_none() {
+        return;
+    }
+    let size = font_size.clamp(8.0, 16.0);
+    let mut tag = |text: String, top: bool| {
+        c.set_font(size, 500, true);
+        let tw = c.measure_text(&text);
+        let tag_h = size + 3.0;
+        let tag_pad = 3.0;
+        let x = chart.left + 2.0;
+        let y = if top { chart.top + 2.0 } else { chart.bottom - tag_h - 2.0 };
+        c.set_fill(t.card_hi);
+        c.fill_rrect(Rect::from_xywh(x, y, tw + tag_pad * 2.0, tag_h), 3.0);
+        c.set_fill(t.fg3);
+        c.set_align(Align::Left);
         c.set_baseline(CBaseline::Top);
-        c.set_fill(t.fg4);
-        c.set_font((r.height() * 0.12).clamp(9.0, 14.0), 400, true);
-        if let Some(high) = high {
-            c.set_align(Align::Left);
-            c.fill_text(&format!("高 {high:.2}"), r.left + pad, r.top + r.height() * 0.84);
-        }
-        if let Some(low) = low {
-            c.set_align(Align::Right);
-            c.fill_text(&format!("低 {low:.2}"), r.right - pad, r.top + r.height() * 0.84);
-        }
+        c.fill_text(&text, x + tag_pad, y + 1.5);
+    };
+    if let Some(high) = high {
+        tag(format!("高 {high:.2}"), true);
+    }
+    if let Some(low) = low {
+        tag(format!("低 {low:.2}"), false);
     }
 }

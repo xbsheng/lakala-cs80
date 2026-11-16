@@ -268,6 +268,25 @@ export function freshStamp(d) {
   return { text: today ? `${hm} 更新` : `${at.getMonth() + 1}/${at.getDate()} ${hm}`, color: '' };
 }
 
+/** 股票组件专用：轮询中“5s前更新”，停盘/午休“10:28更新” */
+export function stockStamp(d, polling) {
+  if (!d || !d.fetchedAt) return null;
+  if (d.stale) return { text: '更新失败·重取中', color: '#fabe46' };
+  const at = new Date(d.fetchedAt);
+  if (polling) {
+    const secs = Math.max(0, Math.floor((Date.now() - at.getTime()) / 1000));
+    let text;
+    if (secs < 1) text = '刚刚更新';
+    else if (secs < 60) text = `${secs}s前更新`;
+    else if (secs < 3600) text = `${Math.floor(secs / 60)}m前更新`;
+    else text = `${Math.floor(secs / 3600)}h前更新`;
+    return { text, color: '' };
+  }
+  const hm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  const today = at.toDateString() === new Date().toDateString();
+  return { text: today ? `${hm}更新` : `${at.getMonth() + 1}/${at.getDate()} ${hm}更新`, color: '' };
+}
+
 function ago(iso) {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (mins < 60) return `${mins}m ago`;
@@ -553,32 +572,34 @@ export function stockRow(ctx, r, item, t, opts = {}) {
   const sx = r.x + pad + nameW + pad * 0.6;
   const sw = r.x + r.w - pad - priceW - pad * 0.6 - sx;
   if (sw > 30) {
-    minuteChart(
-      ctx,
-      { x: sx, y: r.y + r.h * 0.2, w: sw, h: r.h * 0.62 },
-      item.points,
-      item.preClose ?? item.prev,
-      color,
-      opts.slots
-    );
+    const chart = { x: sx, y: r.y + r.h * 0.2, w: sw, h: r.h * 0.62 };
+    minuteChart(ctx, chart, item.points, item.preClose ?? item.prev, color, opts.slots);
+    stockRangeTags(ctx, chart, item, t, Math.max(9, Math.min(13, r.h * 0.11)));
   }
+}
 
-  // 本时段最高/最低（小字，放在分时图下方，不抢价格和曲线）
+/** 分时图左上/左下角的高/低标签，像坐标轴的两个极值点 */
+export function stockRangeTags(ctx, chart, item, t, fontSize = 10) {
   const high = item.high == null ? NaN : Number(item.high);
   const low = item.low == null ? NaN : Number(item.low);
-  if (Number.isFinite(high) || Number.isFinite(low)) {
-    ctx.fillStyle = t.fg4;
-    ctx.font = font(Math.max(9, Math.min(r.h * 0.12, 14)), 400, true);
+  if (!Number.isFinite(high) && !Number.isFinite(low)) return;
+  const size = Math.max(8, Math.min(16, fontSize));
+  const tag = (text, top) => {
+    ctx.font = font(size, 500, true);
+    const tw = ctx.measureText(text).width;
+    const h = size + 3;
+    const x = chart.x + 2;
+    const y = top ? chart.y + 2 : chart.y + chart.h - h - 2;
+    roundRect(ctx, x, y, tw + 6, h, 3);
+    ctx.fillStyle = t.cardHi;
+    ctx.fill();
+    ctx.fillStyle = t.fg3;
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    if (Number.isFinite(high)) {
-      ctx.textAlign = 'left';
-      ctx.fillText(`高 ${high.toFixed(2)}`, r.x + pad, r.y + r.h * 0.84);
-    }
-    if (Number.isFinite(low)) {
-      ctx.textAlign = 'right';
-      ctx.fillText(`低 ${low.toFixed(2)}`, r.x + r.w - pad, r.y + r.h * 0.84);
-    }
-  }
+    ctx.fillText(text, x + 3, y + 1.5);
+  };
+  if (Number.isFinite(high)) tag(`高 ${high.toFixed(2)}`, true);
+  if (Number.isFinite(low)) tag(`低 ${low.toFixed(2)}`, false);
 }
 
 /** open-meteo 的 WMO weather_code → 图标类别 */
@@ -1172,7 +1193,7 @@ export const WIDGETS = {
     },
     draw(ctx, r, cfg, d, t) {
       const pad = Math.max(8, r.w * 0.025);
-      const stamp = freshStamp(d);
+      const stamp = stockStamp(d, stockPolling());
       const session = stockSession();
       const inner = card(ctx, r, t, {
         title: cfg.title || (cfg.us || cfg.usFut ? session.label : '股票'),

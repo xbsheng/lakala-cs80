@@ -6,7 +6,7 @@ use crate::canvas::{Align, Baseline, Canvas2D};
 use crate::data::Need;
 use crate::pages::RustPage;
 use crate::theme::Theme;
-use crate::widgets::common::{card, fresh_stamp, minute_chart, minute_slots, parse_points, stock_poll_ttl_or, stock_row};
+use crate::widgets::common::{card, chart_range_tags, fresh_stamp_stock, minute_chart, minute_slots, parse_points, stock_poll_ttl_or, stock_polling, stock_row};
 
 pub struct StockPage;
 pub static STOCK: StockPage = StockPage;
@@ -28,7 +28,7 @@ impl RustPage for StockPage {
         c.set_font(20.0, 600, false);
         let title = cfg.get("title").and_then(Value::as_str).unwrap_or("自选股").to_uppercase();
         c.tracked_text(&title, pad, pad, 2.6);
-        if let Some((stamp, color)) = fresh_stamp(data) {
+        if let Some((stamp, color)) = fresh_stamp_stock(data, stock_polling()) {
             c.set_font(18.0, 400, true);
             c.set_fill(if color == skia_safe::Color::TRANSPARENT { t.fg4 } else { color });
             c.fill_text(&stamp, pad, pad + 30.0);
@@ -87,23 +87,18 @@ impl RustPage for StockPage {
         c.set_font(19.0, 400, true);
         let pre = lead.get("preClose").and_then(Value::as_f64)
             .or_else(|| lead.get("prev").and_then(Value::as_f64)).unwrap_or(0.0);
-        let mut pre_txt = format!("昨收 {pre:.2}");
-        if let (Some(high), Some(low)) = (
-            lead.get("high").and_then(Value::as_f64),
-            lead.get("low").and_then(Value::as_f64),
-        ) {
-            pre_txt.push_str(&format!("    高 {high:.2}   低 {low:.2}"));
-        }
-        c.fill_text(&pre_txt, pad + 28.0, card_y + 158.0);
+        c.fill_text(&format!("昨收 {pre:.2}"), pad + 28.0, card_y + 158.0);
         let points = parse_points(lead.get("points").unwrap_or(&Value::Null));
+        let chart = Rect::from_xywh(pad + 28.0, card_y + 186.0, w - pad * 2.0 - 56.0, card_h - 202.0);
         minute_chart(
             c,
-            Rect::from_xywh(pad + 28.0, card_y + 186.0, w - pad * 2.0 - 56.0, card_h - 202.0),
+            chart,
             &points,
             pre,
             color,
             minute_slots(lead.get("symbol").and_then(Value::as_str).unwrap_or("")),
         );
+        chart_range_tags(c, chart, lead, t, 15.0);
 
         let rest = &items[1..];
         let mut y = card_y + card_h + 30.0;
