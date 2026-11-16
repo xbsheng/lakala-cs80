@@ -91,6 +91,23 @@
         "null"
       ],
       "minimum": 0
+    },
+    "titleSource": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "manual",
+        "auto",
+        null
+      ]
+    },
+    "project": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   }
 }

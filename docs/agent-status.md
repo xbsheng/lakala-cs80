@@ -50,7 +50,9 @@ Codex hooks  ─┘                 ↓
   "promptKind": "confirm",
   "tool": "bash",
   "runningSince": 1794810000000,
-  "title": "检查 Agent 状态",
+  "title": "lakala-cs80 · 检查 Agent 状态",
+  "titleSource": "auto",
+  "project": "lakala-cs80",
   "source": "pi-extension",
   "updatedAt": 1794820000000
 }
@@ -70,7 +72,9 @@ Codex hooks  ─┘                 ↓
 | `promptKind` | `confirm` / `select` / `input` / `editor` / `custom` / `permission` |
 | `tool` | 当前/最后一次工具名，可为空 |
 | `runningSince` | 当前这轮开始运行的 Unix 毫秒；done 时清空 |
-| `title` | 会话标题，可为空 |
+| `title` | 屏幕展示标题；Pi 扩展写 `project · 规则摘要` |
+| `titleSource` | `auto` / `manual` / null |
+| `project` | 项目名（cwd basename），可为空 |
 | `source` | `pi-extension` / `claude-hook` / `codex-hook` |
 | `updatedAt` | Unix 毫秒时间戳 |
 
@@ -102,7 +106,8 @@ error
 
 - `running`：显示 `运行 5m`（从 `runningSince` 计算；无 sidecar 时从最后一次 user message 推断）
 - `waiting_confirmation`：显示 `等待`
-- `done`：显示 `5m` / `2h` 等距今年龄
+- `done`：1 小时内蓝色；不足 1 分钟显示 `刚刚`，之后显示 `5m` / `2h`
+- 灰色：`done` 超过 1 小时，或 `idle`（超过 1 天）；logo、标题、状态点一起弱化
 - `error`：显示 `异常退出`
 
 ## 3. Pi extension
@@ -139,6 +144,30 @@ cp examples/agent-status/pi-cs80-status.js ~/.pi/agent/extensions/
 - 用 **`ui_prompt_start/end`**，不要从工具卡住时间推断确认框。
 - `sessionManager.getSessionId()` / `getSessionFile()` 提供精确会话，不依赖 cwd。
 - 状态文件原子写入（临时文件 + rename），权限 `0600`。
+
+### 自动标题
+
+Pi 扩展会在 `before_agent_start` 收到 `event.prompt` 时生成：
+
+```text
+<项目名> · <最后一条用户提问的规则摘要>
+```
+
+例如：
+
+```text
+lakala-cs80 · 检查接口，为什么设备一直断开
+```
+
+规则摘要不是模型总结，只做本地提取：
+
+- 取第一行/第一句
+- 去掉代码块、URL、绝对路径、邮箱、IP、常见 token 形状
+- 过滤 `/command`、`继续`、`ok` 这类无意义输入
+- 项目名最多 12 字符，摘要最多 14 字符
+- `/name` 手动标题优先，不会被自动标题覆盖
+
+因此它能“简短”，但不能保证 100% 去敏感；屏幕公开场景建议再加手动别名或中性标题。
 
 ## 4. Claude Code hooks
 
@@ -253,12 +282,14 @@ for session in scan_sessions():
 - 带 `pid` 的状态（Pi extension）会检查进程是否还活着
 - 没有 `pid` 的 hook 状态靠 `updatedAt` + session 文件/进程兜底
 - running 时输出 `runningFor` 秒数；UI 显示 `运行 5m`
+- 数据刷新：有 `running` 会话时 1 秒一次；没有 running 时保持 3 秒
 
 匹配规则：
 
 1. `sessionFile` 完全相等优先。
 2. 否则 `sessionId` 相等。
 3. 找不到就回退到现有推断。
+4. 标题优先使用 sidecar `title`，否则使用会话首条 user message。
 
 新鲜度：
 
@@ -270,7 +301,7 @@ for session in scan_sessions():
 清理：
 
 - `SessionEnd` / `session_shutdown` 删除对应文件。
-- host 启动时清理超过 24 小时的孤儿状态文件。
+- host 目前不主动清理孤儿状态文件；异常退出留下的文件可按需手动删除。
 
 ## 8. 通用性判断
 

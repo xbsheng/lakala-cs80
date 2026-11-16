@@ -982,7 +982,8 @@ export const WIDGETS = {
     label: 'Agent',
     icon: '<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6 6.5v3M10 6.5v3"/>',
     min: [2, 2],
-    needs: { kind: 'agents', ttl: 3000 },
+    // 有 running 会话时 1s，全部结束/等待时保持 3s
+    needs: { kind: 'agents', ttl: (_cfg, data) => (data && data.running > 0 ? 1000 : 3000) },
     // config.hide：整组隐藏某个 agent；config.hideTasks：只隐藏某一条会话
     config: { hide: [], hideTasks: [] },
     draw(ctx, r, cfg, d, t) {
@@ -1035,7 +1036,11 @@ export const WIDGETS = {
         const y = inner.y + i * rowH;
         const cy = y + rowH / 2;
         const st = stateOf(it);
-        const alpha = st.blink ? pulse : it.state === 'idle' ? 0.45 : 1;
+        const age = Number(it.age || 0);
+        const isDone = it.state === 'done';
+        const isBlue = isDone && age < 3600;
+        const isGray = it.state === 'idle' || (isDone && age >= 3600);
+        const alpha = st.blink ? pulse : isGray ? 0.45 : 1;
 
         // 状态点（运行中/等待确认会呼吸）
         ctx.globalAlpha = alpha;
@@ -1047,7 +1052,7 @@ export const WIDGETS = {
         // Agent logo（识别用，替代文字）
         const img = agentLogo(it.agent);
         const lx = inner.x + dot + 8;
-        ctx.globalAlpha = it.state === 'idle' ? 0.4 : 1;
+        ctx.globalAlpha = isGray ? 0.4 : 1;
         if (img) {
           ctx.drawImage(img, lx, cy - logo / 2, logo, logo);
         } else {
@@ -1068,7 +1073,7 @@ export const WIDGETS = {
         const titleW = inner.w - (titleX - inner.x) - chipW - 8;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = it.state === 'idle' ? t.fg4 : it.state === 'done' || it.state === 'error' ? t.fg2 : t.fg;
+        ctx.fillStyle = isGray ? t.fg4 : it.state === 'done' || it.state === 'error' ? t.fg2 : t.fg;
         ctx.font = font(Math.max(14, Math.min(rowH * 0.36, 24)), 400);
         ctx.fillText(ellipsis(ctx, it.title || '', titleW), titleX, cy);
 
@@ -1077,7 +1082,8 @@ export const WIDGETS = {
         const runFor = it.runningFor == null ? NaN : Number(it.runningFor);
         const runningTxt = it.state === 'running' && Number.isFinite(runFor)
           ? `运行 ${ageTxt(Math.max(0, runFor))}` : '';
-        const rightTxt = runningTxt || st.label || ageTxt(it.age || 0);
+        const agoTxt = isBlue && age < 60 ? '刚刚' : ageTxt(age);
+        const rightTxt = runningTxt || st.label || agoTxt;
         const rightIsLabel = Boolean(runningTxt || st.label);
         ctx.font = font(Math.max(12, Math.min(rowH * 0.3, 19)), rightIsLabel ? 500 : 400, !rightIsLabel);
         ctx.globalAlpha = st.blink ? pulse : 1;

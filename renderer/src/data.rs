@@ -235,7 +235,14 @@ fn spawn_fetch(
                             started.elapsed().as_millis()
                         );
                     }
-                    let next = need.ttl;
+                    // Agent 组件：有会话在跑时 1s 刷新；没有 running 时回到 needs.ttl（3s）。
+                    let next = if need.kind == "agents"
+                        && value.get("running").and_then(Value::as_i64).unwrap_or(0) > 0
+                    {
+                        Duration::from_secs(1)
+                    } else {
+                        need.ttl
+                    };
                     cache.insert(
                         key.clone(),
                         Entry {

@@ -64,11 +64,12 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme, assets
             "done" if age < 3600 => (Color::from_rgb(0x5a, 0xa9, 0xff), "", false),
             _ => (Color::from_rgb(0x6b, 0x72, 0x80), "", false),
         };
-        let alpha = if blink { pulse } else if state == "idle" { 0.45 } else { 1.0 };
+        let gray = state == "idle" || (state == "done" && age >= 3600);
+        let alpha = if blink { pulse } else if gray { 0.45 } else { 1.0 };
         c.set_alpha(alpha);
         c.set_fill(color);
         c.fill_circle(inner.rect.left + dot / 2.0, cy, dot / 2.0);
-        c.set_alpha(if state == "idle" { 0.4 } else { 1.0 });
+        c.set_alpha(if gray { 0.4 } else { 1.0 });
         let lx = inner.rect.left + dot + 8.0;
         let agent = it.get("agent").and_then(Value::as_str).unwrap_or("");
         if !assets.draw_logo(c, agent, lx, cy - logo / 2.0, logo, logo) {
@@ -88,7 +89,7 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme, assets
         let title_w = inner.rect.right - title_x - chip_w - 8.0;
         c.set_align(Align::Left);
         c.set_baseline(Baseline::Middle);
-        c.set_fill(if state == "idle" { t.fg4 } else if state == "done" || state == "error" { t.fg2 } else { t.fg });
+        c.set_fill(if gray { t.fg4 } else if state == "done" || state == "error" { t.fg2 } else { t.fg });
         c.set_font((row_h * 0.36).clamp(14.0, 24.0), 400, false);
         let title = it.get("title").and_then(Value::as_str).unwrap_or("");
         let title = c.ellipsis(title, title_w);
@@ -99,7 +100,11 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme, assets
                 .map(|secs| format!("运行 {}", age_txt(secs)))
                 .unwrap_or_else(|| "运行中".into())
         } else if label.is_empty() {
-            age_txt(age)
+            if state == "done" && age < 3600 && age < 60 {
+                "刚刚".into()
+            } else {
+                age_txt(age)
+            }
         } else {
             label.to_string()
         };

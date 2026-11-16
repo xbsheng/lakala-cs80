@@ -12,7 +12,7 @@
 | 文件 | 用途 |
 |---|---|
 | `status.schema.json` | 统一状态文件 JSON Schema |
-| `pi-cs80-status.js` | Pi 全局 extension，精确等待确认/完成 |
+| `pi-cs80-status.js` | Pi 全局 extension，精确等待确认/完成，并生成 `项目 · 规则摘要` 标题 |
 | `cs80-agent-status.py` | Claude Code / Codex 共用的 hook adapter |
 | `claude-settings.example.json` | Claude Code hooks 配置示例 |
 | `codex-hooks.example.json` | Codex lifecycle hooks 配置示例 |
@@ -53,6 +53,18 @@ cat ~/.cs80_panel/agent-status/pi/*.json
 - `waiting_confirmation`：明确在等权限/确认对话框
 - `done`：一轮结束，等新输入
 - `error`：异常结束
+
+Pi 还会写一个短标题：
+
+```text
+lakala-cs80 · 检查接口，为什么设备一直断开
+```
+
+- 项目名取 cwd basename
+- 摘要来自最后一条用户提问
+- 本地规则提取，会过滤 URL/路径/邮箱/IP/常见 token
+- 手动 `/name` 优先，不会被覆盖
+- 规则摘要不能保证 100% 去敏感，公开屏幕建议再配手动别名
 
 ## Claude Code
 
@@ -106,7 +118,7 @@ printf '%s\n' '{"session_id":"demo","hook_event_name":"SessionEnd"}' \
 ls "$HOME/.cs80_panel/agent-status/claude/"             # demo.json 已删除
 ```
 
-## Host 合并规则（待接入）
+## Host 合并规则（已接入）
 
 ```text
 sessionId / sessionFile 匹配

@@ -157,7 +157,7 @@ export function startDataLoop(onChange) {
       const mod = await loadPageModule(page);
       const need = mod && mod.needs;
       if (!need) continue;
-      const ttl = typeof need.ttl === 'function' ? need.ttl(page.config || {}) : (need.ttl || 60000);
+      const ttl = typeof need.ttl === 'function' ? need.ttl(page.config || {}, state.data[page.id]) : (need.ttl || 60000);
       const key = 'page:' + page.id;
       if (last[key] && Date.now() - last[key] < ttl) continue;
       // needs.when 说不刷（如休盘）且有旧数据 → 不拉，屏上继续显示上次的
@@ -184,7 +184,7 @@ export function startDataLoop(onChange) {
     for (const w of widgets) {
       const def = WIDGETS[w.type];
       if (!def || !def.needs) continue;
-      const ttl = typeof def.needs.ttl === 'function' ? def.needs.ttl(w.config || {}) : (def.needs.ttl || 60000);
+      const ttl = typeof def.needs.ttl === 'function' ? def.needs.ttl(w.config || {}, state.data[w.id]) : (def.needs.ttl || 60000);
       const due = ttl === 0 || !last[w.id] || Date.now() - last[w.id] > ttl;
       if (!due) continue;
       // 休盘/不需要刷新时保持旧数据：有数据就不再拉，等下次该拉的时候自然接上

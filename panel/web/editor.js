@@ -515,7 +515,7 @@ function renderInspector() {
       <button class="btn btn-sm" data-act="dup">复制</button>
       <button class="btn btn-sm" data-act="del">删除</button>
     </div>
-    ${def.needs ? `<div class="hint" style="margin-top:10px">数据源 <code>${def.needs.kind}</code>，缓存 ${Math.round((def.needs.ttl || 0) / 1000)}s</div>` : ''}`;
+    ${def.needs ? `<div class="hint" style="margin-top:10px">数据源 <code>${def.needs.kind}</code>，缓存 ${typeof def.needs.ttl === 'function' ? '动态' : Math.round((def.needs.ttl || 0) / 1000) + 's'}</div>` : ''}`;
 
   box.querySelectorAll('[data-cfg]').forEach((input) => {
     input.addEventListener('change', () => {

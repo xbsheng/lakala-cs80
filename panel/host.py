@@ -2393,6 +2393,11 @@ def agents():
             sidecar_state = _status_state(sidecar, now, is_alive)
             if sidecar_state:
                 state = sidecar_state
+            if sidecar:
+                side_title = str(sidecar.get("title") or "").strip()
+                if side_title:
+                    # Pi extension 已把标题压缩成 "project · 规则摘要"（或手动 /name）。
+                    title = side_title[:80]
             running_since = None
             if state == "running":
                 if sidecar:
@@ -3016,7 +3021,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, dict(load_saver_cfg(), files=screensaver_files(), screen=dict(SCREEN_STATE),
                                         saver=SAVER.status() if SAVER else None))
         if path == "/api/data/agents":
-            return self._send(200, CACHE.get("agents", 3, agents))
+            return self._send(200, CACHE.get("agents", 1, agents))
         if path == "/api/data/system":
             # 0.9s 缓存：多个组件共用一次采样，网速差分才有固定 dt
             return self._send(200, CACHE.get("sys", 0.9, system_metrics))
