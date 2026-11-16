@@ -1,5 +1,7 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
@@ -20,113 +22,242 @@ impl Need {
     }
 }
 
+#[derive(Clone)]
+struct Entry {
+    next_try: Instant,
+    fetched_ms: i64,
+    value: Value,
+}
+
+#[derive(Default)]
+struct Control {
+    layout: Option<Value>,
+    saver_playing: bool,
+}
+
 pub struct DataStore {
     host: String,
-    agent: ureq::Agent,
-    cache: HashMap<String, (Instant, Value)>,
+    cache: Arc<Mutex<HashMap<String, Entry>>>,
+    inflight: Arc<Mutex<HashSet<String>>>,
+    control: Arc<Mutex<Control>>,
 }
 
 impl DataStore {
     pub fn new(host: impl Into<String>) -> Self {
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(3))
-            .build();
+        let host = host.into().trim_end_matches('/').to_string();
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let inflight = Arc::new(Mutex::new(HashSet::new()));
+        let control = Arc::new(Mutex::new(Control::default()));
+
+        // layout / screensaver 也放到后台轮询：它们绝不能卡住渲染循环。
+        {
+            let host = host.clone();
+            let control = control.clone();
+            thread::spawn(move || {
+                let agent = ureq::AgentBuilder::new()
+                    .timeout(Duration::from_secs(2))
+                    .build();
+                loop {
+                    if let Ok(resp) = agent.get(&format!("{host}/api/layout")).call() {
+                        if let Ok(v) = resp.into_json::<Value>() {
+                            if let Ok(mut c) = control.lock() {
+                                c.layout = Some(v);
+                            }
+                        }
+                    }
+                    if let Ok(resp) = agent.get(&format!("{host}/api/screensaver")).call() {
+                        if let Ok(v) = resp.into_json::<Value>() {
+                            let playing = v
+                                .get("saver")
+                                .and_then(|s| s.get("playing"))
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false);
+                            if let Ok(mut c) = control.lock() {
+                                c.saver_playing = playing;
+                            }
+                        }
+                    }
+                    thread::sleep(Duration::from_secs(2));
+                }
+            });
+        }
+
         Self {
-            host: host.into().trim_end_matches('/').to_string(),
-            agent,
-            cache: HashMap::new(),
+            host,
+            cache,
+            inflight,
+            control,
         }
     }
 
+    /// 只在启动时阻塞一次；运行中轮询走 `layout_snapshot`。
     pub fn layout(&self) -> anyhow::Result<Value> {
-        let v = self
-            .agent
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(5))
+            .build();
+        let v = agent
             .get(&format!("{}/api/layout", self.host))
             .call()?
             .into_json::<Value>()?;
         Ok(v)
     }
 
-    pub fn status(&self) -> anyhow::Result<Value> {
-        let v = self
-            .agent
-            .get(&format!("{}/api/status", self.host))
-            .call()?
-            .into_json::<Value>()?;
-        Ok(v)
+    pub fn layout_snapshot(&self) -> Option<Value> {
+        self.control.lock().ok().and_then(|c| c.layout.clone())
     }
 
-    pub fn screensaver(&self) -> anyhow::Result<Value> {
-        let v = self
-            .agent
-            .get(&format!("{}/api/screensaver", self.host))
-            .call()?
-            .into_json::<Value>()?;
-        Ok(v)
+    pub fn screensaver_playing(&self) -> bool {
+        self.control
+            .lock()
+            .map(|c| c.saver_playing)
+            .unwrap_or(false)
     }
 
-    pub fn get(&mut self, need: &Need) -> Value {
-        let mut query = need.query.clone();
-        query.sort();
-        let key = format!(
-            "{}?{}",
-            need.kind,
-            query
-                .iter()
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect::<Vec<_>>()
-                .join("&")
-        );
+    /// 永远不阻塞：有缓存立即返回；过期时后台刷新，渲染继续用旧值。
+    pub fn get(&self, need: &Need) -> Value {
+        let key = key_for(need);
+        let now = Instant::now();
+        let cached = self
+            .cache
+            .lock()
+            .ok()
+            .and_then(|c| c.get(&key).cloned())
+            .map(|e| {
+                let fresh = now < e.next_try;
+                (e.value, fresh)
+            });
 
-        if let Some((at, val)) = self.cache.get(&key) {
-            if at.elapsed() < need.ttl {
-                return val.clone();
-            }
+        if let Some((value, true)) = &cached {
+            return value.clone();
         }
 
-        let mut qs = Vec::new();
-        for (k, v) in &need.query {
-            qs.push(format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)));
-        }
-        let url = if qs.is_empty() {
-            format!("{}/api/data/{}", self.host, need.kind)
-        } else {
-            format!("{}/api/data/{}?{}", self.host, need.kind, qs.join("&"))
-        };
-
-        match self.agent.get(&url).call() {
-            Ok(resp) => match resp.into_json::<Value>() {
-                Ok(mut v) => {
-                    // host 的 Cache 命中时不会补 fetchedAt；组件靠它显示「更新 Ns 前」。
-                    if let Some(obj) = v.as_object_mut() {
-                        if !obj.contains_key("fetchedAt") {
-                            obj.insert("fetchedAt".into(), json!(now_ms()));
-                        }
-                    }
-                    self.cache.insert(key, (Instant::now(), v.clone()));
-                    v
+        let start = self
+            .inflight
+            .lock()
+            .map(|mut set| {
+                if set.contains(&key) {
+                    false
+                } else {
+                    set.insert(key.clone());
+                    true
                 }
-                Err(e) => self.fallback(&key, format!("decode: {e}")),
-            },
-            Err(e) => self.fallback(&key, format!("request: {e}")),
+            })
+            .unwrap_or(false);
+        if start {
+            spawn_fetch(
+                self.host.clone(),
+                need.clone(),
+                key,
+                self.cache.clone(),
+                self.inflight.clone(),
+            );
         }
-    }
 
-    fn fallback(&self, key: &str, err: String) -> Value {
-        if let Some((at, val)) = self.cache.get(key) {
-            let mut v = val.clone();
-            if let Some(obj) = v.as_object_mut() {
-                obj.insert("stale".into(), json!(true));
-                obj.insert("fetchedAt".into(), json!(now_ms() - at.elapsed().as_millis() as i64));
-            }
-            return v;
-        }
-        json!({"error": err, "stale": true})
+        cached
+            .map(|(v, _)| v)
+            .unwrap_or_else(|| json!({"loading": true}))
     }
 }
 
+fn key_for(need: &Need) -> String {
+    let mut q = need.query.clone();
+    q.sort();
+    format!(
+        "{}?{}",
+        need.kind,
+        q.iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&")
+    )
+}
+
+fn url_for(host: &str, need: &Need) -> String {
+    let mut qs = Vec::new();
+    for (k, v) in &need.query {
+        qs.push(format!(
+            "{}={}",
+            urlencoding::encode(k),
+            urlencoding::encode(v)
+        ));
+    }
+    if qs.is_empty() {
+        format!("{host}/api/data/{}", need.kind)
+    } else {
+        format!("{host}/api/data/{}?{}", need.kind, qs.join("&"))
+    }
+}
+
+fn spawn_fetch(
+    host: String,
+    need: Need,
+    key: String,
+    cache: Arc<Mutex<HashMap<String, Entry>>>,
+    inflight: Arc<Mutex<HashSet<String>>>,
+) {
+    thread::spawn(move || {
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(4))
+            .build();
+        let result: Result<Value, String> = match agent.get(&url_for(&host, &need)).call() {
+            Ok(resp) => resp.into_json::<Value>().map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        let now = Instant::now();
+        let fetched_ms = now_ms();
+        if let Ok(mut cache) = cache.lock() {
+            match result {
+                Ok(mut value) => {
+                    if let Some(obj) = value.as_object_mut() {
+                        if !obj.contains_key("fetchedAt") {
+                            obj.insert("fetchedAt".into(), json!(fetched_ms));
+                        }
+                    }
+                    let stale = value.get("stale").and_then(Value::as_bool).unwrap_or(false);
+                    let next = if stale {
+                        Duration::from_secs(15)
+                    } else {
+                        need.ttl
+                    };
+                    cache.insert(
+                        key.clone(),
+                        Entry {
+                            next_try: now + next,
+                            fetched_ms,
+                            value,
+                        },
+                    );
+                }
+                Err(e) => {
+                    let (fetched, mut value) = cache
+                        .get(&key)
+                        .map(|e| (e.fetched_ms, e.value.clone()))
+                        .unwrap_or((fetched_ms, json!({"error": e.clone()})));
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("stale".into(), json!(true));
+                        obj.insert("fetchedAt".into(), json!(fetched));
+                        if !obj.contains_key("error") {
+                            obj.insert("error".into(), json!(e));
+                        }
+                    }
+                    cache.insert(
+                        key.clone(),
+                        Entry {
+                            next_try: now + Duration::from_secs(15),
+                            fetched_ms: fetched,
+                            value,
+                        },
+                    );
+                }
+            }
+        }
+        if let Ok(mut set) = inflight.lock() {
+            set.remove(&key);
+        }
+    });
+}
+
 fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)

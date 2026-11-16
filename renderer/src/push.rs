@@ -16,7 +16,7 @@ pub struct Push {
 impl Push {
     pub fn new(host: impl Into<String>) -> Self {
         let agent = ureq::AgentBuilder::new()
-            .timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(3))
             .build();
         Self {
             host: host.into().trim_end_matches('/').to_string(),

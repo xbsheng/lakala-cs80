@@ -139,6 +139,9 @@ pub trait Widget {
 - 其余：复用两块 `Vec<u16>`（prev/cur），按 32×16 tile diff，`POST /api/patch`。
 - 每次只分配必要缓冲；避免像浏览器 pusher 那样每 tick `getImageData`/`toBgr565` 新分配。
 - HTTP 用 keep-alive，patch 很小；不再有 Chromium 网络服务的 2 MB shm。
+- **数据拉取全部后台化**：`DataStore::get()` 只读缓存，TTL 到期时起后台线程刷新，
+  渲染循环从不等待 `/api/data/*`；layout / screensaver 也由后台线程 2s 轮询。
+  股票/资讯接口偶发 3–10s 时只显示旧值或“更新失败”，不会把动画冻住。
 
 ## 6. 迁移阶段
 
@@ -233,6 +236,7 @@ cargo run --release -- --layout test-layout.json --push --preview-port 0 --fps 1
 | RSS | 约 **38 MB** |
 | CPU | 约 **8–10% 单核**（整页含 news/stock/HA/runCat，10 Hz） |
 | 设备链路 | `/api/frame` 首次、`/api/patch` **10 Hz**；`session=1`、`last=patch`、`ok=1` |
+| 卡顿验证 | 连续 3 分钟采样，patch 最大间隔 **0.41 s**，无 >1.2 s 的冻结 |
 | 预览 | `http://<host>:8788/preview.png`；`/preview/page?page=stockpage` 可预览自定义页 |
 | 浏览器 | `cs80-kiosk` 已 stop + disable；编辑器健康检查发现 8788 后自动暂停 pusher |
 

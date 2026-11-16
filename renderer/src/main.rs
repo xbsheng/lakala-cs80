@@ -52,10 +52,9 @@ fn main() -> Result<()> {
         }
     }
 
-    let store = DataStore::new(&host);
-    let mut data = DataStore::new(&host);
+    let data = DataStore::new(&host);
     let watch_layout = layout_path.is_none();
-    let mut layout = load_layout(&store, layout_path.as_ref())?;
+    let mut layout = load_layout(&data, layout_path.as_ref())?;
     let fonts = Fonts::new();
     let theme = Theme::default();
     let mut assets = Assets::new();
@@ -63,7 +62,7 @@ fn main() -> Result<()> {
     if once {
         let page = layout.active_page();
         let mut surface = match page {
-            Some(p) => render_page(p, &mut data, &fonts, &theme, &mut assets),
+            Some(p) => render_page(p, &data, &fonts, &theme, &mut assets),
             None => empty_surface(&theme),
         };
         let png = encode_png(&mut surface);
@@ -99,7 +98,6 @@ fn main() -> Result<()> {
 
     let mut last_layout = serde_json::to_string(&layout)?;
     let mut last_poll = Instant::now();
-    let mut last_saver_poll = Instant::now();
     let mut saver_playing = false;
     let mut last_preview_at = Instant::now() - Duration::from_secs(1);
     let mut last_preview_page_at = Instant::now() - Duration::from_secs(1);
@@ -116,7 +114,7 @@ fn main() -> Result<()> {
         };
         if watch_layout && last_poll.elapsed() >= Duration::from_secs(2) {
             last_poll = Instant::now();
-            if let Ok(v) = store.layout() {
+            if let Some(v) = data.layout_snapshot() {
                 let s = serde_json::to_string(&v)?;
                 if s != last_layout {
                     match serde_json::from_value::<Layout>(v) {
@@ -132,20 +130,15 @@ fn main() -> Result<()> {
             }
         }
 
-        if last_saver_poll.elapsed() >= Duration::from_secs(2) {
-            last_saver_poll = Instant::now();
-            if let Ok(v) = store.screensaver() {
-                let was = saver_playing;
-                saver_playing = v.get("saver").and_then(|s| s.get("playing")).and_then(Value::as_bool).unwrap_or(false);
-                if was && !saver_playing {
-                    if let Some(p) = &mut pusher { p.reset(); }
-                }
-            }
+        let playing_now = data.screensaver_playing();
+        if saver_playing && !playing_now {
+            if let Some(p) = &mut pusher { p.reset(); }
         }
+        saver_playing = playing_now;
 
         let active_id = layout.active_page().map(|p| p.id.clone()).unwrap_or_default();
         let surface = match layout.active_page() {
-            Some(page) => render_page(page, &mut data, &fonts, &theme, &mut assets),
+            Some(page) => render_page(page, &data, &fonts, &theme, &mut assets),
             None => empty_surface(&theme),
         };
         let mut surface = surface;
@@ -168,7 +161,7 @@ fn main() -> Result<()> {
                     last_preview_page_at = Instant::now();
                     last_preview_page_id = Some(id.clone());
                     if let Some(page) = layout.pages.iter().find(|p| p.id == id) {
-                        let mut pv = render_page(page, &mut data, &fonts, &theme, &mut assets);
+                        let mut pv = render_page(page, &data, &fonts, &theme, &mut assets);
                         let png = encode_png(&mut pv);
                         if let Ok(mut g) = f.lock() { *g = png; }
                     }
@@ -223,7 +216,7 @@ fn empty_surface(theme: &Theme) -> Surface {
     surface
 }
 
-fn render_page(page: &LayoutPage, data: &mut DataStore, fonts: &Fonts, theme: &Theme, assets: &mut Assets) -> Surface {
+fn render_page(page: &LayoutPage, data: &DataStore, fonts: &Fonts, theme: &Theme, assets: &mut Assets) -> Surface {
     let mut surface = surfaces::raster_n32_premul((800, 1280)).expect("surface");
     let canvas = surface.canvas();
     canvas.clear(theme.bg);
