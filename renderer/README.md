@@ -130,8 +130,10 @@ pub trait Widget {
 
 ## 5. 渲染循环
 
-- **基础 1 Hz**；只有 RunCat/表盘秒针/交互时才 5 Hz。Rust 没有浏览器 tick 开销，
-  但仍避免无意义重绘。
+- **含动画组件的页面 5 Hz**（`clock_dial` / `clock` / `runcat` / `runcat_bar` / `agent`）；
+  纯静态页自动回落到 1 Hz。`--fps` 是上限，服务里默认 5。
+- `clock_dial` 的秒针用**亚秒角度**，5 Hz 下连续走，不再每秒跳一下。
+- 预览 PNG 最多 1 Hz 编码一次；设备推帧不受影响。
 - 首次、layout 变化、patch 失败：整帧（`POST /api/frame`，RGB888 一次性 3 MB）。
 - 其余：复用两块 `Vec<u16>`（prev/cur），按 32×16 tile diff，`POST /api/patch`。
 - 每次只分配必要缓冲；避免像浏览器 pusher 那样每 tick `getImageData`/`toBgr565` 新分配。
@@ -222,14 +224,14 @@ cargo run --release -- --layout test-layout.json --push --preview-port 0 --fps 1
 - 自定义页面 `stockpage` → `src/pages/stock.rs`（Rust `RustPage` registry）
 - 测试布局：`renderer/test-layout.json`、`test-p2.json`、`test-p3.json`、`test-page.json`、`test-runcat-bar.json`
 
-**本机实测（live layout，1 Hz）**
+**本机实测（live layout，5 Hz 动画页）**
 
 | 项目 | 结果 |
 |---|---|
 | 进程 | `/root/lakala-cs80/renderer/target/release/cs80-renderer` |
 | RSS | 约 **38 MB** |
-| CPU | 约 **7% 单核**（整页含 news/stock/HA/runCat） |
-| 设备链路 | `/api/frame` 首次、`/api/patch` 1 Hz；`session=1`、`last=patch`、`ok=1` |
+| CPU | 约 **5% 单核**（整页含 news/stock/HA/runCat，5 Hz） |
+| 设备链路 | `/api/frame` 首次、`/api/patch` **5 Hz**；`session=1`、`last=patch`、`ok=1` |
 | 预览 | `http://<host>:8788/preview.png`；`/preview/page?page=stockpage` 可预览自定义页 |
 | 浏览器 | `cs80-kiosk` 已 stop + disable；编辑器健康检查发现 8788 后自动暂停 pusher |
 

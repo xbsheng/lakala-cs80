@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     let mut once = false;
     let mut preview_port = 8788u16;
     let mut preview_bind = "0.0.0.0".to_string();
-    let mut fps = 1.0f32;
+    let mut fps = 5.0f32;
 
     let args: Vec<String> = env::args().skip(1).collect();
     let mut i = 0;
@@ -101,11 +101,19 @@ fn main() -> Result<()> {
     let mut last_poll = Instant::now();
     let mut last_saver_poll = Instant::now();
     let mut saver_playing = false;
-    let frame_time = Duration::from_secs_f32(1.0 / fps);
+    let mut last_preview_at = Instant::now() - Duration::from_secs(1);
+    let mut last_preview_page_at = Instant::now() - Duration::from_secs(1);
+    let mut last_preview_page_id: Option<String> = None;
     println!("renderer: layout={} fps={fps} push={push_enabled}", layout.active_page().map(|p| p.id.as_str()).unwrap_or("-"));
 
     loop {
         let started = Instant::now();
+        let max_fps = fps.max(0.2);
+        let frame_time = if page_animated(&layout) {
+            Duration::from_secs_f32(1.0 / max_fps)
+        } else {
+            Duration::from_secs(1)
+        };
         if watch_layout && last_poll.elapsed() >= Duration::from_secs(2) {
             last_poll = Instant::now();
             if let Ok(v) = store.layout() {
@@ -142,21 +150,31 @@ fn main() -> Result<()> {
         };
         let mut surface = surface;
         if let Some(f) = &preview_frame {
-            let png = encode_png(&mut surface);
-            if let Ok(mut g) = f.lock() { *g = png; }
+            if last_preview_at.elapsed() >= Duration::from_secs(1) {
+                last_preview_at = Instant::now();
+                let png = encode_png(&mut surface);
+                if let Ok(mut g) = f.lock() { *g = png; }
+            }
         }
 
         // 编辑器可以请求预览某个指定页面（不影响设备推送的 active page）。
         if let (Some(f), Some(req)) = (&preview_frame, &preview_page) {
             let requested = req.lock().ok().and_then(|g| g.clone());
+            let changed = requested != last_preview_page_id;
             if let Some(id) = requested {
-                if id != active_id {
+                if id != active_id
+                    && (changed || last_preview_page_at.elapsed() >= Duration::from_secs(1))
+                {
+                    last_preview_page_at = Instant::now();
+                    last_preview_page_id = Some(id.clone());
                     if let Some(page) = layout.pages.iter().find(|p| p.id == id) {
                         let mut pv = render_page(page, &mut data, &fonts, &theme, &mut assets);
                         let png = encode_png(&mut pv);
                         if let Ok(mut g) = f.lock() { *g = png; }
                     }
                 }
+            } else {
+                last_preview_page_id = None;
             }
         }
 
@@ -167,6 +185,20 @@ fn main() -> Result<()> {
         }
         thread::sleep(frame_time.saturating_sub(started.elapsed()));
     }
+}
+
+fn page_animated(layout: &Layout) -> bool {
+    layout
+        .active_page()
+        .map(|p| {
+            p.widgets.iter().any(|w| {
+                matches!(
+                    w.kind.as_str(),
+                    "clock" | "clock_dial" | "runcat" | "runcat_bar" | "agent"
+                )
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn load_layout(store: &DataStore, path: Option<&PathBuf>) -> Result<Layout> {
