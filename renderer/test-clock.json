@@ -1,0 +1,1 @@
+{"version":2,"activePage":"main","pages":[{"id":"main","name":"clock","type":"grid","widgets":[{"id":"clock","type":"clock_dial","cell":[0,0,3,2],"config":{"city":"北京","showWeather":true}}]}]}
