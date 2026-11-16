@@ -6,7 +6,7 @@ use crate::canvas::{Align, Baseline, Canvas2D};
 use crate::data::Need;
 use crate::pages::RustPage;
 use crate::theme::Theme;
-use crate::widgets::common::{card, chart_range_tags, fresh_stamp_stock, minute_chart, minute_slots, parse_points, stock_poll_ttl_or, stock_polling, stock_row};
+use crate::widgets::common::{card, fresh_stamp_stock, minute_chart, minute_slots, parse_points, stock_poll_ttl_or, stock_polling, stock_row};
 
 pub struct StockPage;
 pub static STOCK: StockPage = StockPage;
@@ -98,7 +98,6 @@ impl RustPage for StockPage {
             color,
             minute_slots(lead.get("symbol").and_then(Value::as_str).unwrap_or("")),
         );
-        chart_range_tags(c, chart, lead, t, 15.0);
 
         let rest = &items[1..];
         let mut y = card_y + card_h + 30.0;

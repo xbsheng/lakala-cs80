@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde_json::Value;
 use skia_safe::{Color, Rect};
@@ -278,25 +278,13 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme) {
     if foot.is_empty() {
         foot.push("Home Assistant".into());
     }
-    let age = d
-        .get("fetchedAt")
-        .and_then(Value::as_i64)
-        .map(|ms| ((now_ms() - ms).max(0) / 1000) as i64);
     let foot_y = inner.rect.bottom;
     c.set_baseline(Baseline::Bottom);
     c.set_align(Align::Left);
     c.set_font((inner.rect.height() * 0.06).clamp(11.0, 14.0), 400, false);
     c.set_fill(t.fg3);
-    let foot_text = c.ellipsis(&foot.join("   "), inner.rect.width() * 0.7);
+    let foot_text = c.ellipsis(&foot.join("   "), inner.rect.width() * 0.9);
     c.fill_text(&foot_text, inner.rect.left, foot_y);
-    c.set_align(Align::Right);
-    c.set_fill(if online { t.fg4 } else { t.up });
-    let right = if online {
-        age.map(|a| format!("更新 {a}s 前")).unwrap_or_else(|| "HA 在线".into())
-    } else {
-        "HA 离线".into()
-    };
-    c.fill_text(&right, inner.rect.right, foot_y);
 }
 
 fn empty(c: &mut Canvas2D, inner: &Rect, t: &Theme, d: &Value) {
@@ -435,11 +423,4 @@ fn ha_text(it: &Value) -> String {
         .into(),
         _ => s.into(),
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }

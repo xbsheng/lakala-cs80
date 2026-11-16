@@ -94,7 +94,15 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme, assets
         let title = c.ellipsis(title, title_w);
         c.fill_text(&title, title_x, cy);
         c.set_align(Align::Right);
-        let right = if label.is_empty() { age_txt(age) } else { label.to_string() };
+        let right = if state == "running" {
+            it.get("runningFor").and_then(Value::as_i64)
+                .map(|secs| format!("运行 {}", age_txt(secs)))
+                .unwrap_or_else(|| "运行中".into())
+        } else if label.is_empty() {
+            age_txt(age)
+        } else {
+            label.to_string()
+        };
         c.set_font((row_h * 0.3).clamp(12.0, 19.0), if label.is_empty() { 400 } else { 500 }, label.is_empty());
         c.set_alpha(if blink { pulse } else { 1.0 });
         c.set_fill(color);

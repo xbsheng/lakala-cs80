@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xbsheng/lakala-cs80/agent-status.schema.json",
+  "title": "CS80 agent status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "agent",
+    "sessionId",
+    "state",
+    "updatedAt"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "agent": {
+      "type": "string",
+      "enum": [
+        "pi",
+        "claude",
+        "codex",
+        "deepseek"
+      ]
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "sessionFile": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pid": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cwd": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "running",
+        "waiting_confirmation",
+        "done",
+        "error"
+      ]
+    },
+    "promptKind": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "confirm",
+        "select",
+        "input",
+        "editor",
+        "custom",
+        "permission",
+        null
+      ]
+    },
+    "tool": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "updatedAt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "runningSince": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    }
+  }
+}

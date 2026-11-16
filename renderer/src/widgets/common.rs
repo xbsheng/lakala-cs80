@@ -176,32 +176,40 @@ pub fn fresh_stamp(d: &Value) -> Option<(String, Color)> {
     }
 }
 
+/// 相对新鲜度：5s前更新 / 2m前更新；拉取失败仍是黄色提示。
+pub fn fresh_stamp_ago(d: &Value) -> Option<(String, Color)> {
+    let ms = d.get("fetchedAt")?.as_i64()?;
+    if d.get("stale").and_then(Value::as_bool).unwrap_or(false) {
+        return Some(("更新失败·重取中".into(), Color::from_rgb(0xfa, 0xbe, 0x46)));
+    }
+    let secs = ((now_ms() - ms).max(0) / 1000) as i64;
+    let text = if secs < 1 {
+        "刚刚更新".to_string()
+    } else if secs < 60 {
+        format!("{secs}s前更新")
+    } else if secs < 3600 {
+        format!("{}m前更新", secs / 60)
+    } else {
+        format!("{}h前更新", secs / 3600)
+    };
+    Some((text, Color::TRANSPARENT))
+}
+
 /// 股票组件专用：轮询中显示“5s前更新”，停盘/午休显示“10:28更新”。
 pub fn fresh_stamp_stock(d: &Value, polling: bool) -> Option<(String, Color)> {
+    if polling {
+        return fresh_stamp_ago(d);
+    }
     let ms = d.get("fetchedAt")?.as_i64()?;
     if d.get("stale").and_then(Value::as_bool).unwrap_or(false) {
         return Some(("更新失败·重取中".into(), Color::from_rgb(0xfa, 0xbe, 0x46)));
     }
     let at = Local.timestamp_millis_opt(ms).single()?;
-    if polling {
-        let secs = ((now_ms() - ms).max(0) / 1000) as i64;
-        let text = if secs < 1 {
-            "刚刚更新".to_string()
-        } else if secs < 60 {
-            format!("{secs}s前更新")
-        } else if secs < 3600 {
-            format!("{}m前更新", secs / 60)
-        } else {
-            format!("{}h前更新", secs / 3600)
-        };
-        Some((text, Color::TRANSPARENT))
+    let today = Local::now().date_naive() == at.date_naive();
+    if today {
+        Some((format!("{}更新", at.format("%H:%M")), Color::TRANSPARENT))
     } else {
-        let today = Local::now().date_naive() == at.date_naive();
-        if today {
-            Some((format!("{}更新", at.format("%H:%M")), Color::TRANSPARENT))
-        } else {
-            Some((format!("{}更新", at.format("%-m/%-d %H:%M")), Color::TRANSPARENT))
-        }
+        Some((format!("{}更新", at.format("%-m/%-d %H:%M")), Color::TRANSPARENT))
     }
 }
 
@@ -579,36 +587,5 @@ pub fn stock_row(c: &mut Canvas2D, r: Rect, item: &Value, t: &Theme, card: bool,
             color,
             slots.unwrap_or(points.len() as f32),
         );
-        chart_range_tags(c, chart, item, t, (r.height() * 0.11).clamp(9.0, 13.0));
-    }
-}
-
-/// 分时图左上角/左下角的高/低标签，像坐标轴的两个极值点。
-pub fn chart_range_tags(c: &mut Canvas2D, chart: Rect, item: &Value, t: &Theme, font_size: f32) {
-    let high = item.get("high").and_then(Value::as_f64);
-    let low = item.get("low").and_then(Value::as_f64);
-    if high.is_none() && low.is_none() {
-        return;
-    }
-    let size = font_size.clamp(8.0, 16.0);
-    let mut tag = |text: String, top: bool| {
-        c.set_font(size, 500, true);
-        let tw = c.measure_text(&text);
-        let tag_h = size + 3.0;
-        let tag_pad = 3.0;
-        let x = chart.left + 2.0;
-        let y = if top { chart.top + 2.0 } else { chart.bottom - tag_h - 2.0 };
-        c.set_fill(t.card_hi);
-        c.fill_rrect(Rect::from_xywh(x, y, tw + tag_pad * 2.0, tag_h), 3.0);
-        c.set_fill(t.fg3);
-        c.set_align(Align::Left);
-        c.set_baseline(CBaseline::Top);
-        c.fill_text(&text, x + tag_pad, y + 1.5);
-    };
-    if let Some(high) = high {
-        tag(format!("高 {high:.2}"), true);
-    }
-    if let Some(low) = low {
-        tag(format!("低 {low:.2}"), false);
     }
 }

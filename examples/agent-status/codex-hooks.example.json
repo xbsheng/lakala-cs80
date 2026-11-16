@@ -1,0 +1,104 @@
+{
+  "description": "CS80 agent status (Codex lifecycle hooks)",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABS/PATH/examples/agent-status/cs80-agent-status.py codex",
+            "timeout": 5,
+            "async": false
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABS/PATH/examples/agent-status/cs80-agent-status.py codex",
+            "timeout": 5,
+            "async": false
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABS/PATH/examples/agent-status/cs80-agent-status.py codex",
+            "timeout": 5,
+            "async": false
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABS/PATH/examples/agent-status/cs80-agent-status.py codex",
+            "timeout": 5,
+            "async": false
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABS/PATH/examples/agent-status/cs80-agent-status.py codex",
+            "timeout": 5,
+            "async": false
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABS/PATH/examples/agent-status/cs80-agent-status.py codex",
+            "timeout": 5,
+            "async": false
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABS/PATH/examples/agent-status/cs80-agent-status.py codex",
+            "timeout": 5,
+            "async": false
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /ABS/PATH/examples/agent-status/cs80-agent-status.py codex",
+            "timeout": 5,
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}

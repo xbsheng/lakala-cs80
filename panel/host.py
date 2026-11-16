@@ -37,6 +37,7 @@ SIDECAR = os.path.join(HERE, "qdc1.exe" if os.name == "nt" else "qdc1")
 LAYOUT = os.path.join(os.path.expanduser("~"), ".cs80_panel", "layout.json")
 STATE_FILE = os.path.join(os.path.expanduser("~"), "cs80_display", "state.json")
 CONF_DIR = os.path.join(os.path.expanduser("~"), ".cs80_panel")  # 跨平台：日志/配置都放这儿
+AGENT_STATUS_DIR = os.path.join(CONF_DIR, "agent-status")  # Agent extension/hook 写出的精确状态
 SIDECAR_LOG = os.path.join(CONF_DIR, "sidecar.log")
 WEB_LOG = os.path.join(CONF_DIR, "web.log")
 # 连上设备时把亮度拉回这个值（0 = 不动）。固件默认 100、PWM 全停；但 +/- 键或
@@ -1807,7 +1808,7 @@ def news(sources):
 
 # ---------- 本机 Coding Agent 会话扫描 ----------
 # 思路：会话都在本地落 jsonl（Pi / Claude Code / Codex），用文件的 mtime 当"最近活动"，
-# 用进程是否存活区分「运行中」和「等待输入」，标题取会话里第一条用户消息。
+# 用进程是否存活 + 会话最后一条记录区分「运行中 / 等待确认 / 已结束」。
 # procs：进程名/命令行 token。macOS 上是可执行文件名；Windows 上 npm 全局装的 CLI
 # 实际跑成 node.exe + 一段带包名的命令行，所以把包名也列进来（两端通用、不会误伤）。
 AGENT_SPECS = [
@@ -1825,59 +1826,156 @@ AGENT_SPECS = [
 _TITLE_CACHE = {}
 
 
-def _alive_agents():
-    """判断哪些 agent 进程活着（macOS 用 ps，Windows 用 Get-CimInstance）。"""
+_AGENT_WRAPPERS = {
+    "node", "nodejs", "bun", "deno", "python", "python3", "ruby",
+    "perl", "env", "npx", "pnpm", "yarn", "sh", "bash", "zsh",
+}
+
+
+def _agent_from_cmd(cmd):
+    """从进程命令行识别 Agent；只检查可执行名和包装器的第一个路径参数。"""
+    parts = str(cmd or "").split()
+    if not parts:
+        return None
+    exe = os.path.basename(parts[0].strip("\"'")).lower()
+    names = {exe}
+    if exe in _AGENT_WRAPPERS:
+        for arg in parts[1:5]:
+            arg = arg.strip("\"'")
+            if arg in ("-c", "-e"):
+                break
+            if arg.startswith("-"):
+                continue
+            names.update(x.lower() for x in re.split(r"[/\\]+", arg) if x)
+            break
+    for spec in AGENT_SPECS:
+        for needle in spec["procs"]:
+            n = needle.lower()
+            if " " in n:
+                if n in cmd.lower():
+                    return spec["id"]
+            elif exe == n or exe == n + ".exe" or n in names:
+                return spec["id"]
+    return None
+
+
+def _etime_secs(text):
+    """ps 的 [[dd-]hh:]mm:ss → 秒；解析失败返回 None。"""
+    try:
+        days = 0
+        text = str(text).strip()
+        if "-" in text:
+            d, text = text.split("-", 1)
+            days = int(d)
+        parts = [int(x) for x in text.split(":")]
+        if len(parts) == 2:
+            h, m, s = 0, parts[0], parts[1]
+        elif len(parts) == 3:
+            h, m, s = parts
+        else:
+            return None
+        return days * 86400 + h * 3600 + m * 60 + s
+    except (TypeError, ValueError):
+        return None
+
+
+_AGENT_CPU = {}
+
+
+def _proc_cpu_ticks(pid):
+    """Linux /proc/<pid>/stat 的 utime+stime（clock ticks）；其他平台返回 None。"""
+    try:
+        with open("/proc/%d/stat" % pid, "r") as f:
+            data = f.read()
+        rest = data[data.rfind(")") + 2:].split()
+        return int(rest[11]) + int(rest[12])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _agent_process_info():
+    """{agent_id: {pids, cwds, children:[(pid, age)]}}。
+
+    children 带上子进程启动时长，用来区分“工具在跑”和“常驻 MCP/helper”：
+    工具子进程一般和最后一次 toolCall 差不多同时启动；常驻子进程会更老。
+    """
+    rows = []
     if os.name == "nt":
         try:
             out = subprocess.run(
                 ["powershell", "-NoProfile", "-Command",
-                 "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.Name)`t$($_.CommandLine)\" }"],
+                 "Get-CimInstance Win32_Process | ForEach-Object { "
+                 "\"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)\" }"],
                 capture_output=True, text=True, timeout=12)
+            for line in (out.stdout or "").splitlines():
+                fields = line.split("\t", 3)
+                if len(fields) < 4:
+                    continue
+                try:
+                    pid, ppid = int(fields[0]), int(fields[1])
+                except ValueError:
+                    continue
+                rows.append((pid, ppid, None, (fields[2] + " " + fields[3]).strip()))
         except Exception:
-            return set()
-        rows = []
-        for line in (out.stdout or "").splitlines():
-            name, _, cmd = line.partition("\t")
-            name, cmd = name.strip().lower(), cmd.strip().lower()
-            if name:
-                rows.append((name, cmd))
-        alive = set()
-        for spec in AGENT_SPECS:
-            for needle in spec["procs"]:
-                n = needle.lower()
-                hit = False
-                for name, cmd in rows:
-                    if " " in n:
-                        hit = n in cmd
-                    else:
-                        # 名字精确匹配（带/不带 .exe），或者命令行的某个 token 就是它
-                        hit = (name == n or name == n + ".exe" or
-                               any(tok == n for tok in re.split(r"[\s\"'=/\\]+", cmd)))
-                    if hit:
-                        break
-                if hit:
-                    alive.add(spec["id"])
-                    break
-        return alive
-    try:
-        out = subprocess.check_output(["ps", "-Ao", "command="], text=True, timeout=5)
-    except Exception:
-        return set()
-    cmds = [line.strip() for line in out.splitlines() if line.strip()]
-    bases = []
-    for line in cmds:
-        parts = line.split()
-        if parts:
-            bases.append(os.path.basename(parts[0]))
-            bases.append(line)
-    alive = set()
-    for spec in AGENT_SPECS:
-        for needle in spec["procs"]:
-            hit = (needle in bases) if " " not in needle else any(needle in c for c in cmds)
-            if hit:
-                alive.add(spec["id"])
-                break
-    return alive
+            return {}
+    else:
+        try:
+            out = subprocess.check_output(
+                ["ps", "-Ao", "pid=,ppid=,etime=,command="], text=True, timeout=5)
+        except Exception:
+            return {}
+        for line in out.splitlines():
+            m = re.match(r"\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)", line)
+            if m:
+                rows.append((int(m.group(1)), int(m.group(2)),
+                             _etime_secs(m.group(3)), m.group(4).strip()))
+    info = {}
+    for pid, _ppid, _age, cmd in rows:
+        sid = _agent_from_cmd(cmd)
+        if sid:
+            info.setdefault(sid, {"pids": set(), "cwds": set(), "children": []})["pids"].add(pid)
+    for pid, ppid, age, _cmd in rows:
+        for val in info.values():
+            if ppid in val["pids"]:
+                val["children"].append((pid, age))
+    for val in info.values():
+        for pid in val["pids"]:
+            try:
+                cwd = os.readlink("/proc/%d/cwd" % pid)
+            except OSError:
+                continue
+            try:
+                val["cwds"].add(os.path.realpath(cwd))
+            except OSError:
+                pass
+        val["busy"] = bool(val["children"])  # 兼容旧字段
+        # 工具完全在 Agent 进程内执行时没有子进程；用采样 CPU 作为补充信号。
+        now_mono = time.monotonic()
+        hz = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+        active = False
+        for pid in val["pids"]:
+            ticks = _proc_cpu_ticks(pid)
+            prev = _AGENT_CPU.get(pid)
+            if ticks is not None:
+                _AGENT_CPU[pid] = (ticks, now_mono)
+            if ticks is not None and prev is not None:
+                dt = now_mono - prev[1]
+                if dt > 0.4:
+                    frac = (ticks - prev[0]) / (dt * max(1, hz))
+                    if frac > 0.03:
+                        active = True
+        val["cpu_active"] = active
+    # 清理已经退出的 pid，避免长期运行后字典膨胀
+    current = {pid for val in info.values() for pid in val["pids"]}
+    for pid in list(_AGENT_CPU):
+        if pid not in current:
+            _AGENT_CPU.pop(pid, None)
+    return info
+
+
+def _alive_agents():
+    """兼容旧调用：返回活着的 Agent id 集合。"""
+    return set(_agent_process_info())
 
 
 def music():
@@ -1990,6 +2088,141 @@ def _session_failed(path, tail_bytes=20000, tail_lines=25):
     return False
 
 
+def _session_activity(path):
+    """最后一条有效 jsonl 记录里，助手是不是刚结束/是否停在工具调用上。"""
+    try:
+        size = os.path.getsize(path)
+        start = max(0, size - 1_000_000)
+        with open(path, "rb") as f:
+            f.seek(start)
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    lines = tail.splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]  # 第一行通常是被截断的
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(d, dict):
+            continue
+        msg = d.get("message") if isinstance(d.get("message"), dict) else {}
+        payload = d.get("payload") if isinstance(d.get("payload"), dict) else {}
+        role = str(msg.get("role") or d.get("role") or d.get("type") or "").lower()
+        stop = str(
+            msg.get("stopReason") or msg.get("stop_reason")
+            or d.get("stopReason") or d.get("stop_reason")
+            or payload.get("stop_reason") or ""
+        ).lower()
+        content = msg.get("content")
+        if content is None:
+            content = d.get("content")
+        if content is None:
+            content = payload.get("content")
+        tool_call = False
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                kind = str(part.get("type") or "").lower()
+                if kind in ("toolcall", "tool_call", "tool_use", "function_call", "local_shell_call", "custom_tool_call"):
+                    tool_call = True
+        return {"role": role, "stop": stop, "tool_call": tool_call}
+    return None
+
+
+def _session_state(path, age, live, children=None, cpu_active=False):
+    """live + 最后一条是工具调用且长时间无结果 → 等待确认；
+    助手已经 stop（回合结束）就不再算等待，避免空闲进程一直黄闪。"""
+    if not live:
+        return "error" if _session_failed(path) else ("done" if age < 86400 else "idle")
+    act = _session_activity(path)
+    if not act:
+        return "running" if age < 120 else ("done" if age < 86400 else "idle")
+    role, stop, tool_call = act["role"], act["stop"], act["tool_call"]
+    if stop in ("error", "aborted", "cancelled", "canceled"):
+        return "error"
+    pending = tool_call or stop in ("tooluse", "tool_calls", "tool_use", "function_call")
+    if role == "assistant":
+        if pending:
+            if age >= 86400:
+                return "idle"
+            # 只把「和这次 toolCall 差不多同时启动」的子进程当成工具；
+            # 早于它启动的常驻 MCP/helper 不阻止 waiting。
+            tool_running = cpu_active or any(
+                ca is None or ca <= age + 30
+                for _pid, ca in (children or [])
+            )
+            return "waiting" if age >= 120 and not tool_running else "running"
+        return "done" if age < 86400 else "idle"
+    # 最后一条是 toolResult / user / system：仍在一轮任务里，给个上限防止
+    # 进程挂着但永远显示运行中。
+    return "running" if age < 3600 else ("done" if age < 86400 else "idle")
+
+
+def _parse_ts(value):
+    """JSONL 里的时间戳：Unix ms/s 或 ISO 8601 → 秒。"""
+    if isinstance(value, (int, float)):
+        v = float(value)
+        return v / 1000.0 if v > 1_000_000_000_000 else v
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _session_run_start(path, tail_bytes=1_000_000):
+    """当前一轮开始时间（最后一次 user message）；找不到返回 None。"""
+    try:
+        size = os.path.getsize(path)
+        start = max(0, size - tail_bytes)
+        with open(path, "rb") as f:
+            f.seek(start)
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    lines = tail.splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]
+    last_user = None
+    last_stop = None
+    done_stops = {"stop", "end_turn", "endturn", "complete", "completed", "length", "max_tokens"}
+    for line in lines:
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(d, dict):
+            continue
+        msg = d.get("message") if isinstance(d.get("message"), dict) else {}
+        payload = d.get("payload") if isinstance(d.get("payload"), dict) else {}
+        role = str(msg.get("role") or d.get("role") or d.get("type") or "").lower()
+        stop = str(
+            msg.get("stopReason") or msg.get("stop_reason")
+            or d.get("stopReason") or d.get("stop_reason")
+            or payload.get("stop_reason") or ""
+        ).lower()
+        ts = _parse_ts(msg.get("timestamp") or d.get("timestamp") or payload.get("timestamp"))
+        if ts is None:
+            continue
+        if role == "user":
+            last_user = ts if last_user is None else max(last_user, ts)
+        elif role == "assistant" and stop in done_stops:
+            last_stop = ts if last_stop is None else max(last_stop, ts)
+    if last_user is None:
+        return None
+    if last_stop is not None and last_user <= last_stop:
+        return None
+    return last_user
+
+
 def _session_files(roots, limit=4):
     files = []
     for root in roots:
@@ -2012,13 +2245,123 @@ def _session_files(roots, limit=4):
     return files[:limit]
 
 
+_AGENT_STATUS_MAP = {
+    "running": "running",
+    "waiting_confirmation": "waiting",
+    "done": "done",
+    "error": "error",
+}
+
+
+def _pid_alive(pid):
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        # Windows 上不做 kill(0) 探测；状态文件的时间/会话仍会兜底。
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _load_agent_statuses():
+    """读 ~/.cs80_panel/agent-status/<agent>/*.json，按 sessionFile/ID 建索引。"""
+    by_path = {}
+    by_id = {}
+    if not os.path.isdir(AGENT_STATUS_DIR):
+        return by_path, by_id
+    for agent in os.listdir(AGENT_STATUS_DIR):
+        adir = os.path.join(AGENT_STATUS_DIR, agent)
+        if not os.path.isdir(adir):
+            continue
+        for name in os.listdir(adir):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(adir, name)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    d = json.load(f)
+            except Exception:
+                continue
+            if not isinstance(d, dict):
+                continue
+            d.setdefault("agent", agent)
+            sid = str(d.get("sessionId") or "").strip()
+            sf = str(d.get("sessionFile") or "").strip()
+            if sid:
+                by_id[(agent, sid)] = d
+            if sf:
+                by_path[(agent, os.path.realpath(sf))] = d
+    return by_path, by_id
+
+
+def _agent_status_for(by_path, by_id, agent, session_path):
+    real = os.path.realpath(session_path)
+    st = by_path.get((agent, real))
+    if st:
+        return st
+    base = os.path.basename(session_path)
+    for (a, sid), candidate in by_id.items():
+        if a == agent and sid and sid in base:
+            return candidate
+    return None
+
+
+def _status_state(st, now, agent_alive=True):
+    """把 sidecar 状态映射到 UI 状态；过期/进程已退出则返回 None。"""
+    if not st:
+        return None
+    state = _AGENT_STATUS_MAP.get(str(st.get("state") or ""))
+    if not state:
+        return None
+    try:
+        updated = float(st.get("updatedAt") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not updated:
+        return None
+    if updated < 1_000_000_000_000:  # 兼容秒级时间戳
+        updated *= 1000.0
+    age = now - updated / 1000.0
+    if state == "waiting":
+        ttl = 6 * 3600
+    elif state == "running":
+        ttl = 30 * 60
+    else:
+        ttl = 24 * 3600
+    if age > ttl:
+        return None
+    if state in ("running", "waiting") and not agent_alive:
+        return None
+    pid = st.get("pid")
+    if pid is not None and not _pid_alive(pid):
+        return None
+    return state
+
+
 def agents():
-    """给 Agent 状态组件：按「运行中 → 等待输入 → 已完成」+ 最近活动倒序"""
+    """给 Agent 状态组件：按「运行中 → 等待确认 → 已完成」+ 最近活动倒序"""
     now = time.time()
-    alive = _alive_agents()
+    proc_info = _agent_process_info()
+    alive = set(proc_info)
+    status_by_path, status_by_id = _load_agent_statuses()
     items = []
     for spec in AGENT_SPECS:
         is_alive = spec["id"] in alive
+        proc = proc_info.get(spec["id"], {})
+        children = proc.get("children", [])
+        proc_cwds = proc.get("cwds", set())
+        cpu_active = bool(proc.get("cpu_active"))
         sessions = _session_files(spec["roots"])
         if not sessions:
             if is_alive:  # 没有会话日志的 agent（比如 DeepSeek Harness）
@@ -2039,13 +2382,32 @@ def agents():
         for idx, (mtime, path) in enumerate(sessions):
             title, cwd = _session_meta(path)
             age = max(0, now - mtime)
-            live = is_alive and idx == 0  # 只有该 agent 最新的那个会话才算"活着"
-            if live:
-                state = "running" if age < 120 else "waiting"
-            elif _session_failed(path):
-                state = "error"
-            else:
-                state = "done" if age < 86400 else "idle"
+            # 精确映射优先：Agent 进程的 cwd 与 session header 的 cwd 相同，
+            # 就算这个 session 不是最新，也可能是并行会话。
+            cwd_real = os.path.realpath(cwd) if cwd else ""
+            cwd_live = bool(cwd_real and cwd_real in proc_cwds)
+            live = is_alive and (cwd_live or idx == 0 or age < 300)
+            state = _session_state(path, age, live, children, cpu_active)
+            # extension/hook 写出的精确状态优先；过期或进程退出才回退推断。
+            sidecar = _agent_status_for(status_by_path, status_by_id, spec["id"], path)
+            sidecar_state = _status_state(sidecar, now, is_alive)
+            if sidecar_state:
+                state = sidecar_state
+            running_since = None
+            if state == "running":
+                if sidecar:
+                    try:
+                        running_since = float(sidecar.get("runningSince") or 0)
+                    except (TypeError, ValueError):
+                        running_since = None
+                    if running_since and running_since < 1_000_000_000_000:
+                        running_since *= 1000.0
+                if not running_since:
+                    start = _session_run_start(path)
+                    running_since = start * 1000.0 if start else None
+            running_for = None
+            if state == "running" and running_since:
+                running_for = max(0, int(now - running_since / 1000.0))
             if state != "running" and age > 3 * 86400:  # 三天前的旧会话不上屏
                 continue
             items.append(
@@ -2058,6 +2420,7 @@ def agents():
                     "title": title,
                     "cwd": os.path.basename(cwd) if cwd else "",
                     "age": int(age),
+                    "runningFor": running_for,
                     "updated": mtime,
                 }
             )

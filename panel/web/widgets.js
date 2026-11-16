@@ -268,20 +268,25 @@ export function freshStamp(d) {
   return { text: today ? `${hm} 更新` : `${at.getMonth() + 1}/${at.getDate()} ${hm}`, color: '' };
 }
 
+/** 相对新鲜度：5s前更新 / 2m前更新；拉取失败仍是黄色提示 */
+export function freshStampAgo(d) {
+  if (!d || !d.fetchedAt) return null;
+  if (d.stale) return { text: '更新失败·重取中', color: '#fabe46' };
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(d.fetchedAt).getTime()) / 1000));
+  let text;
+  if (secs < 1) text = '刚刚更新';
+  else if (secs < 60) text = `${secs}s前更新`;
+  else if (secs < 3600) text = `${Math.floor(secs / 60)}m前更新`;
+  else text = `${Math.floor(secs / 3600)}h前更新`;
+  return { text, color: '' };
+}
+
 /** 股票组件专用：轮询中“5s前更新”，停盘/午休“10:28更新” */
 export function stockStamp(d, polling) {
+  if (polling) return freshStampAgo(d);
   if (!d || !d.fetchedAt) return null;
   if (d.stale) return { text: '更新失败·重取中', color: '#fabe46' };
   const at = new Date(d.fetchedAt);
-  if (polling) {
-    const secs = Math.max(0, Math.floor((Date.now() - at.getTime()) / 1000));
-    let text;
-    if (secs < 1) text = '刚刚更新';
-    else if (secs < 60) text = `${secs}s前更新`;
-    else if (secs < 3600) text = `${Math.floor(secs / 60)}m前更新`;
-    else text = `${Math.floor(secs / 3600)}h前更新`;
-    return { text, color: '' };
-  }
   const hm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
   const today = at.toDateString() === new Date().toDateString();
   return { text: today ? `${hm}更新` : `${at.getMonth() + 1}/${at.getDate()} ${hm}更新`, color: '' };
@@ -574,32 +579,7 @@ export function stockRow(ctx, r, item, t, opts = {}) {
   if (sw > 30) {
     const chart = { x: sx, y: r.y + r.h * 0.2, w: sw, h: r.h * 0.62 };
     minuteChart(ctx, chart, item.points, item.preClose ?? item.prev, color, opts.slots);
-    stockRangeTags(ctx, chart, item, t, Math.max(9, Math.min(13, r.h * 0.11)));
   }
-}
-
-/** 分时图左上/左下角的高/低标签，像坐标轴的两个极值点 */
-export function stockRangeTags(ctx, chart, item, t, fontSize = 10) {
-  const high = item.high == null ? NaN : Number(item.high);
-  const low = item.low == null ? NaN : Number(item.low);
-  if (!Number.isFinite(high) && !Number.isFinite(low)) return;
-  const size = Math.max(8, Math.min(16, fontSize));
-  const tag = (text, top) => {
-    ctx.font = font(size, 500, true);
-    const tw = ctx.measureText(text).width;
-    const h = size + 3;
-    const x = chart.x + 2;
-    const y = top ? chart.y + 2 : chart.y + chart.h - h - 2;
-    roundRect(ctx, x, y, tw + 6, h, 3);
-    ctx.fillStyle = t.cardHi;
-    ctx.fill();
-    ctx.fillStyle = t.fg3;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(text, x + 3, y + 1.5);
-  };
-  if (Number.isFinite(high)) tag(`高 ${high.toFixed(2)}`, true);
-  if (Number.isFinite(low)) tag(`低 ${low.toFixed(2)}`, false);
 }
 
 /** open-meteo 的 WMO weather_code → 图标类别 */
@@ -1029,7 +1009,7 @@ export const WIDGETS = {
         return;
       }
 
-      // 状态：绿=运行中（呼吸）· 琥珀=等待用户（呼吸）· 红=异常退出 · 蓝=1 小时内结束 · 灰=更早结束
+      // 状态：绿=运行中（呼吸）· 琥珀=等待确认（呼吸）· 红=异常退出 · 蓝=1 小时内结束 · 灰=更早结束
       const pulse = 0.45 + 0.55 * Math.abs(Math.sin((Date.now() % 1600) / 1600 * Math.PI));
       const stateOf = (it) => {
         if (it.state === 'running') return { color: '#3ddc84', label: '运行中', blink: true };
@@ -1057,7 +1037,7 @@ export const WIDGETS = {
         const st = stateOf(it);
         const alpha = st.blink ? pulse : it.state === 'idle' ? 0.45 : 1;
 
-        // 状态点（运行中/等待会呼吸）
+        // 状态点（运行中/等待确认会呼吸）
         ctx.globalAlpha = alpha;
         ctx.fillStyle = st.color;
         ctx.beginPath();
@@ -1092,10 +1072,14 @@ export const WIDGETS = {
         ctx.font = font(Math.max(14, Math.min(rowH * 0.36, 24)), 400);
         ctx.fillText(ellipsis(ctx, it.title || '', titleW), titleX, cy);
 
-        // 右侧：状态文字（呼吸）或时长
+        // 右侧：运行中显示已运行时长；等待/异常显示状态；结束显示距今年龄
         ctx.textAlign = 'right';
-        const rightTxt = st.label || ageTxt(it.age || 0);
-        ctx.font = font(Math.max(12, Math.min(rowH * 0.3, 19)), st.label ? 500 : 400, !st.label);
+        const runFor = it.runningFor == null ? NaN : Number(it.runningFor);
+        const runningTxt = it.state === 'running' && Number.isFinite(runFor)
+          ? `运行 ${ageTxt(Math.max(0, runFor))}` : '';
+        const rightTxt = runningTxt || st.label || ageTxt(it.age || 0);
+        const rightIsLabel = Boolean(runningTxt || st.label);
+        ctx.font = font(Math.max(12, Math.min(rowH * 0.3, 19)), rightIsLabel ? 500 : 400, !rightIsLabel);
         ctx.globalAlpha = st.blink ? pulse : 1;
         ctx.fillStyle = st.color;
         ctx.fillText(rightTxt, inner.x + inner.w, cy);
@@ -1753,8 +1737,8 @@ export const WIDGETS = {
       }
 
       const items = (d && d[ids[active]]) || [];
-      // 右上角小字：更新时间（拉取失败时变成提示，数据仍然是旧的）
-      const stamp = d && d.stale ? { text: '更新失败·重取中', color: '#fabe46' } : freshStamp(d);
+      // 右上角小字：多少秒/分钟前更新（拉取失败时变成提示，数据仍然是旧的）
+      const stamp = freshStampAgo(d);
       if (stamp) {
         ctx.font = font(tabFont * 0.78, 500);
         if (tx + ctx.measureText(stamp.text).width + tabFont * 0.6 < inner.x + inner.w) {
@@ -2009,16 +1993,12 @@ export const WIDGETS = {
       const foot = [];
       if (power) foot.push('⚡ 功率 ' + haText(power) + (power.unit ? ' ' + power.unit : ''));
       if (energy) foot.push('今日 ' + haText(energy) + (energy.unit ? ' ' + energy.unit : ''));
-      const age = d && d.fetchedAt ? Math.max(0, Math.round((Date.now() - d.fetchedAt) / 1000)) : null;
       const footY = inner.y + inner.h;
       ctx.textBaseline = 'bottom';
       ctx.textAlign = 'left';
       ctx.font = font(Math.max(11, Math.min(14, inner.h * 0.06)), 400, true);
       ctx.fillStyle = t.fg3;
-      ctx.fillText(ellipsis(ctx, foot.join('   ') || 'Home Assistant', inner.w * 0.7), inner.x, footY);
-      ctx.textAlign = 'right';
-      ctx.fillStyle = online ? t.fg4 : t.up;
-      ctx.fillText(online ? (age != null ? '更新 ' + age + 's 前' : 'HA 在线') : 'HA 离线', inner.x + inner.w, footY);
+      ctx.fillText(ellipsis(ctx, foot.join('   ') || 'Home Assistant', inner.w * 0.9), inner.x, footY);
     },
   },
 };

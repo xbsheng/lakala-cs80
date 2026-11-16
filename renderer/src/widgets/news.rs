@@ -6,7 +6,7 @@ use skia_safe::{Color, Rect};
 use crate::canvas::{Align, Baseline, Canvas2D};
 use crate::data::Need;
 use crate::theme::Theme;
-use crate::widgets::common::{card, fresh_stamp, news_label, news_sources, now_ms};
+use crate::widgets::common::{card, fresh_stamp_ago, news_label, news_sources, now_ms};
 
 pub fn needs(cfg: &Value) -> Vec<Need> {
     let sources = news_sources(cfg).join(",");
@@ -80,11 +80,7 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme) {
         tx += w + gap;
     }
 
-    let stamp = if d.get("stale").and_then(Value::as_bool).unwrap_or(false) {
-        Some(("更新失败·重取中".to_string(), Color::from_rgb(0xfa, 0xbe, 0x46)))
-    } else {
-        fresh_stamp(d)
-    };
+    let stamp = fresh_stamp_ago(d);
     if let Some((text, color)) = stamp {
         c.set_font(tab_font * 0.78, 500, false);
         let tw = c.measure_text(&text);
