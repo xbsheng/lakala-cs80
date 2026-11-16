@@ -263,10 +263,16 @@ fn spawn_fetch(
                             obj.insert("error".into(), json!(e));
                         }
                     }
+                    // 午休时 portfolio 的 TTL 是「到 13:00」，失败也不要 15s 轮询
+                    let retry = if need.kind == "portfolio" && need.ttl > Duration::from_secs(60) {
+                        need.ttl
+                    } else {
+                        Duration::from_secs(15)
+                    };
                     cache.insert(
                         key.clone(),
                         Entry {
-                            next_try: now + Duration::from_secs(15),
+                            next_try: now + retry,
                             fetched_ms: fetched,
                             value,
                         },

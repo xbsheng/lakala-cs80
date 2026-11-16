@@ -1342,11 +1342,15 @@ def _em_quote(symbol):
         raise RuntimeError("东财无数据")
     price = data.get("f43", 0) / 100.0
     prev = data.get("f60", 0) / 100.0
+    high = data.get("f44", 0) / 100.0
+    low = data.get("f45", 0) / 100.0
     return {
         "symbol": symbol,
         "name": data.get("f58") or symbol,
         "price": price,
         "prev": prev,
+        "high": high or None,
+        "low": low or None,
         "change": round(price - prev, 3),
         "pct": round((price - prev) / prev * 100, 2) if prev else 0.0,
         "source": "eastmoney",
@@ -1371,6 +1375,8 @@ def stock(symbol):
                 "name": str(row.get("股票名称") or row.get("名称") or symbol),
                 "price": price,
                 "prev": prev,
+                "high": float(row.get("最高") or 0) or None,
+                "low": float(row.get("最低") or 0) or None,
                 "change": round(price - prev, 3),
                 "pct": round((price - prev) / prev * 100, 2) if prev else 0.0,
                 "source": "efinance",
@@ -1388,6 +1394,8 @@ def stock(symbol):
                 "name": symbol,
                 "price": price,
                 "prev": prev,
+                "high": float(row.get("最高") or 0) or None,
+                "low": float(row.get("最低") or 0) or None,
                 "change": round(price - prev, 3),
                 "pct": round((price - prev) / prev * 100, 2) if prev else 0.0,
                 "source": "akshare",
@@ -1505,6 +1513,27 @@ def minute(symbol):
         return _sina_cn_minute(symbol)
 
 
+def _pf_range(q):
+    """分时 + 现价 → 本条行情的高/低（盘中休息时不轮询，屏上仍显示上午的高低点）。"""
+    vals = []
+    for p in q.get("points") or []:
+        try:
+            vals.append(float(p[1]))
+        except (TypeError, ValueError, IndexError):
+            pass
+    for key in ("price", "high", "low"):
+        try:
+            v = float(q.get(key))
+            if v:
+                vals.append(v)
+        except (TypeError, ValueError):
+            pass
+    if vals:
+        q["high"] = max(vals)
+        q["low"] = min(vals)
+    return q
+
+
 # 每只股票最后一次成功的结果：(时间, item)。行情接口偶发空数据/超时时用它顶一下，
 # 免得组件上一秒还有分时、下一秒就变成「无分时」。
 _PF_LAST = {}
@@ -1536,6 +1565,7 @@ def _pf_item(sym):
             q["points"] = []
             q["preClose"] = q.get("preClose") or q.get("prev")
         q["stale"] = stale
+    _pf_range(q)
     _PF_LAST[sym] = (time.time(), q)
     return q
 

@@ -71,7 +71,7 @@ pub fn hairline(c: &mut Canvas2D, x1: f32, y1: f32, x2: f32, y2: f32) {
     c.line(x1, y1, x2, y2);
 }
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{Datelike, Local, TimeZone, Timelike, Utc};
 use serde_json::Value;
 
@@ -189,7 +189,8 @@ pub fn stock_session() -> StockSession {
     let cn = Utc::now().with_timezone(&chrono_tz::Asia::Shanghai);
     let cn_day = cn.weekday().num_days_from_sunday() as i32;
     let cn_min = cn.hour() as i32 * 60 + cn.minute() as i32;
-    if (1..=5).contains(&cn_day) && in_window(cn_min, 570, 900) {
+    // A 股 9:15 开始集合竞价，15:00 收盘
+    if (1..=5).contains(&cn_day) && in_window(cn_min, 555, 900) {
         return StockSession { id: "cn", label: "自选股" };
     }
     let us = Utc::now().with_timezone(&chrono_tz::America::New_York);
@@ -199,6 +200,24 @@ pub fn stock_session() -> StockSession {
         return StockSession { id: "us", label: "美股指数" };
     }
     StockSession { id: "fut", label: "美股期货" }
+}
+
+/// A 股午休（11:30–13:00）时把 portfolio 的 TTL 拉到 13:00，避免午休轮询；
+/// 13:00 后恢复 15s。启动时若午休且无缓存，仍会拉一次当天数据。
+pub fn stock_poll_ttl_or(normal_secs: u64) -> Duration {
+    let cn = Utc::now().with_timezone(&chrono_tz::Asia::Shanghai);
+    let day = cn.weekday().num_days_from_sunday() as i32;
+    let min = cn.hour() as i32 * 60 + cn.minute() as i32;
+    if (1..=5).contains(&day) && (690..780).contains(&min) {
+        let secs = (780 - min) * 60 - cn.second() as i32;
+        Duration::from_secs(secs.max(1) as u64)
+    } else {
+        Duration::from_secs(normal_secs)
+    }
+}
+
+pub fn stock_poll_ttl() -> Duration {
+    stock_poll_ttl_or(15)
 }
 
 pub fn stock_symbols(cfg: &Value) -> String {
@@ -521,5 +540,22 @@ pub fn stock_row(c: &mut Canvas2D, r: Rect, item: &Value, t: &Theme, card: bool,
             color,
             slots.unwrap_or(points.len() as f32),
         );
+    }
+
+    // 本时段最高/最低：小字放在分时图下方，不抢价格和曲线
+    let high = item.get("high").and_then(Value::as_f64);
+    let low = item.get("low").and_then(Value::as_f64);
+    if high.is_some() || low.is_some() {
+        c.set_baseline(CBaseline::Top);
+        c.set_fill(t.fg4);
+        c.set_font((r.height() * 0.12).clamp(9.0, 14.0), 400, true);
+        if let Some(high) = high {
+            c.set_align(Align::Left);
+            c.fill_text(&format!("高 {high:.2}"), r.left + pad, r.top + r.height() * 0.84);
+        }
+        if let Some(low) = low {
+            c.set_align(Align::Right);
+            c.fill_text(&format!("低 {low:.2}"), r.right - pad, r.top + r.height() * 0.84);
+        }
     }
 }

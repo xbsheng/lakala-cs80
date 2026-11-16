@@ -219,16 +219,27 @@ const inWindow = (m, a, b) => m >= a && m <= b;
 
 /**
  * 现在该看哪一组行情：
- *   A 股盘中（北京 9:30–15:00，周一–五）→ 自选股
+ *   A 股盘中（北京 9:15–15:00，周一–五；9:15 开始集合竞价）→ 自选股
  *   美股盘中（纽约 9:30–16:00，周一–五）→ 美股指数
  *   其余时间（含美股盘前、A 股收盘后）→ 美股期货
  */
 export function stockSession() {
   const cn = tzClock('Asia/Shanghai');
-  if (cn.day >= 1 && cn.day <= 5 && inWindow(cn.minutes, 570, 900)) return { id: 'cn', label: '自选股' };
+  if (cn.day >= 1 && cn.day <= 5 && inWindow(cn.minutes, 555, 900)) return { id: 'cn', label: '自选股' };
   const us = tzClock('America/New_York');
   if (us.day >= 1 && us.day <= 5 && inWindow(us.minutes, 570, 960)) return { id: 'us', label: '美股指数' };
   return { id: 'fut', label: '美股期货' };
+}
+
+/** A 股午间休市（北京 11:30–13:00）：不轮询，屏上保留上午收盘数据 */
+export function inCnLunch() {
+  const cn = tzClock('Asia/Shanghai');
+  return cn.day >= 1 && cn.day <= 5 && cn.minutes >= 690 && cn.minutes < 780;
+}
+
+/** 股票组件是否需要按 TTL 轮询；午休且有旧数据时由 core.js 跳过请求 */
+export function stockPolling() {
+  return stockSession().id !== 'cn' || !inCnLunch();
 }
 
 /** 当前这组代码：没配 us / usFut 就回落到 symbols（保持老配置也能用） */
@@ -550,6 +561,23 @@ export function stockRow(ctx, r, item, t, opts = {}) {
       color,
       opts.slots
     );
+  }
+
+  // 本时段最高/最低（小字，放在分时图下方，不抢价格和曲线）
+  const high = item.high == null ? NaN : Number(item.high);
+  const low = item.low == null ? NaN : Number(item.low);
+  if (Number.isFinite(high) || Number.isFinite(low)) {
+    ctx.fillStyle = t.fg4;
+    ctx.font = font(Math.max(9, Math.min(r.h * 0.12, 14)), 400, true);
+    ctx.textBaseline = 'top';
+    if (Number.isFinite(high)) {
+      ctx.textAlign = 'left';
+      ctx.fillText(`高 ${high.toFixed(2)}`, r.x + pad, r.y + r.h * 0.84);
+    }
+    if (Number.isFinite(low)) {
+      ctx.textAlign = 'right';
+      ctx.fillText(`低 ${low.toFixed(2)}`, r.x + r.w - pad, r.y + r.h * 0.84);
+    }
   }
 }
 
@@ -1138,6 +1166,8 @@ export const WIDGETS = {
       // 期货也是连续交易，价格每秒都在动；60 秒会让屏上看着像收盘了。
       // 统一 15 秒（host 侧 portfolio 缓存 10 秒，能真的拿到新价）。
       ttl: 15000,
+      // A 股午休不轮询；有旧数据时 core.js 直接跳过，13:00 后恢复
+      when: stockPolling,
       query: (cfg) => ({ symbols: stockSymbols(cfg) }),
     },
     draw(ctx, r, cfg, d, t) {

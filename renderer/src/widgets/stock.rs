@@ -1,18 +1,16 @@
-use std::time::Duration;
-
 use serde_json::Value;
 use skia_safe::Rect;
 
 use crate::canvas::{Align, Baseline, Canvas2D};
 use crate::data::Need;
 use crate::theme::Theme;
-use crate::widgets::common::{card, fresh_stamp, stock_row, stock_session, stock_symbols};
+use crate::widgets::common::{card, fresh_stamp, stock_poll_ttl, stock_row, stock_session, stock_symbols};
 
 pub fn needs(cfg: &Value) -> Vec<Need> {
     vec![Need::new(
         "portfolio",
         vec![("symbols".into(), stock_symbols(cfg))],
-        Duration::from_secs(15),
+        stock_poll_ttl(),
     )]
 }
 
