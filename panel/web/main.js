@@ -344,7 +344,7 @@ async function boot() {
     if (tickTimer) clearInterval(tickTimer);
     tickTimer = setInterval(tick, ms);
   };
-  setRate(200);
+  setRate(100);
   setRateFn = setRate;
 
   // kiosk：布局被编辑器改动后原地重建（不整页 reload），并给外部看门狗发心跳
