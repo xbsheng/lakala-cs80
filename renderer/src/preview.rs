@@ -1,10 +1,11 @@
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 
 use tiny_http::{Header, Method, Response, Server};
 
 pub type PreviewFrame = Arc<Mutex<Vec<u8>>>;
-pub type PreviewPage = Arc<Mutex<Option<String>>>;
+pub type PreviewPage = Arc<Mutex<Option<(String, Instant)>>>;
 
 pub struct Preview {
     pub frame: PreviewFrame,
@@ -65,7 +66,7 @@ pub fn start(addr: &str) -> Option<Preview> {
                 "/preview/page" => {
                     let id = query(&url, "page").filter(|s| !s.is_empty());
                     if let Ok(mut g) = requested.lock() {
-                        *g = id.clone();
+                        *g = id.clone().map(|id| (id, Instant::now()));
                     }
                     let body = serde_json::json!({"ok": true, "page": id}).to_string();
                     let mut resp = Response::from_string(body);

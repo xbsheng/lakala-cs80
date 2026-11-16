@@ -153,8 +153,11 @@ fn main() -> Result<()> {
         // 编辑器可以请求预览某个指定页面（不影响设备推送的 active page）。
         if let (Some(f), Some(req)) = (&preview_frame, &preview_page) {
             let requested = req.lock().ok().and_then(|g| g.clone());
-            let changed = requested != last_preview_page_id;
-            if let Some(id) = requested {
+            // 编辑器每隔 2.5s 续租；编辑器关掉/切走后 6s 自动停止预览页渲染，
+            // 避免 renderer 一直额外拉 stockpage 的数据。
+            let requested = requested.filter(|(_, at)| at.elapsed() < Duration::from_secs(6));
+            let changed = requested.as_ref().map(|(id, _)| id) != last_preview_page_id.as_ref();
+            if let Some((id, _)) = requested {
                 if id != active_id
                     && (changed || last_preview_page_at.elapsed() >= Duration::from_secs(1))
                 {
