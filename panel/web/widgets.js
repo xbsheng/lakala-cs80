@@ -1450,8 +1450,8 @@ export const WIDGETS = {
       const toRad = (deg) => ((deg - 90) * Math.PI) / 180;
       const hourAng = toRad(((now.getHours() % 12) + now.getMinutes() / 60) * 30);
       const minAng = toRad(now.getMinutes() * 6);
-      // 亚秒角度：5/10 Hz 刷新时秒针连续走，不是每秒跳一格。
-      const secAng = toRad((now.getSeconds() + now.getMilliseconds() / 1000) * 6);
+      // 秒针整秒跳；10 Hz 刷新只用于 RunCat/Agent，秒针一秒走一格。
+      const secAng = toRad(now.getSeconds() * 6);
       const thick = Math.max(2.5, numSize * 0.075);
       ctx.strokeStyle = t.fg;
       ctx.lineCap = 'round';

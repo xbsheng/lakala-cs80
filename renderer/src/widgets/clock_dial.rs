@@ -94,8 +94,8 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, data: &Value, t: &Theme) {
     let to_rad = |deg: f32| (deg - 90.0) * std::f32::consts::PI / 180.0;
     let hour_ang = to_rad(((now.hour() % 12) as f32 + now.minute() as f32 / 60.0) * 30.0);
     let min_ang = to_rad(now.minute() as f32 * 6.0);
-    // 秒针用亚秒角度：5 Hz 渲染时是连续走，而不是每秒跳一下。
-    let sec_ang = to_rad((now.second() as f32 + now.nanosecond() as f32 / 1_000_000_000.0) * 6.0);
+    // 秒针按整秒跳：10 Hz 刷新只用于 RunCat/Agent 等，秒针一秒走一格。
+    let sec_ang = to_rad(now.second() as f32 * 6.0);
     let thick = (num_size * 0.075).max(2.5);
     c.set_stroke(t.fg);
     c.set_line_cap_round();

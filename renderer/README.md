@@ -132,8 +132,8 @@ pub trait Widget {
 
 - **含动画组件的页面 10 Hz**（`clock_dial` / `clock` / `runcat` / `runcat_bar` / `agent`）；
   纯静态页自动回落到 1 Hz。`--fps` 是上限，服务里默认 10。
-- `clock_dial` 的秒针用**亚秒角度**，10 Hz 下连续走，不再每秒跳一下。
-  面板/固件的单次 `submit_frame` 约 98 ms，约 10 Hz 是这套硬件的上限；再高只能改固件/面板时序。
+- `clock_dial` 的秒针**按整秒跳**（用户偏好）；10 Hz 刷新主要给 RunCat/Agent 和交互用。
+  面板/固件的单次 `submit_frame` 约 98 ms，约 10 Hz 是这套硬件的上限。
 - 预览 PNG 最多 1 Hz 编码一次；设备推帧不受影响。
 - 首次、layout 变化、patch 失败：整帧（`POST /api/frame`，RGB888 一次性 3 MB）。
 - 其余：复用两块 `Vec<u16>`（prev/cur），按 32×16 tile diff，`POST /api/patch`。
