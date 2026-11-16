@@ -39,6 +39,7 @@ pub struct DataStore {
     host: String,
     cache: Arc<Mutex<HashMap<String, Entry>>>,
     inflight: Arc<Mutex<HashSet<String>>>,
+    fetch_lock: Arc<Mutex<()>>,
     control: Arc<Mutex<Control>>,
 }
 
@@ -47,6 +48,7 @@ impl DataStore {
         let host = host.into().trim_end_matches('/').to_string();
         let cache = Arc::new(Mutex::new(HashMap::new()));
         let inflight = Arc::new(Mutex::new(HashSet::new()));
+        let fetch_lock = Arc::new(Mutex::new(()));
         let control = Arc::new(Mutex::new(Control::default()));
 
         // layout / screensaver 也放到后台轮询：它们绝不能卡住渲染循环。
@@ -86,6 +88,7 @@ impl DataStore {
             host,
             cache,
             inflight,
+            fetch_lock,
             control,
         }
     }
@@ -150,6 +153,7 @@ impl DataStore {
                 key,
                 self.cache.clone(),
                 self.inflight.clone(),
+                self.fetch_lock.clone(),
             );
         }
 
@@ -194,10 +198,19 @@ fn spawn_fetch(
     key: String,
     cache: Arc<Mutex<HashMap<String, Entry>>>,
     inflight: Arc<Mutex<HashSet<String>>>,
+    fetch_lock: Arc<Mutex<()>>,
 ) {
     thread::spawn(move || {
+        // 外部行情/热榜对并发很敏感，和浏览器版一样串行；
+        // HA/system/agents 是 host 本地接口，继续并发，不被外部源拖住。
+        let external = matches!(
+            need.kind.as_str(),
+            "portfolio" | "news" | "weather" | "crypto" | "github" | "kline" | "holiday"
+        );
+        let _guard = external.then(|| fetch_lock.lock());
+        let started = Instant::now();
         let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(4))
+            .timeout(Duration::from_secs(30))
             .build();
         let result: Result<Value, String> = match agent.get(&url_for(&host, &need)).call() {
             Ok(resp) => resp.into_json::<Value>().map_err(|e| e.to_string()),
@@ -213,12 +226,16 @@ fn spawn_fetch(
                             obj.insert("fetchedAt".into(), json!(fetched_ms));
                         }
                     }
-                    let stale = value.get("stale").and_then(Value::as_bool).unwrap_or(false);
-                    let next = if stale {
-                        Duration::from_secs(15)
-                    } else {
-                        need.ttl
-                    };
+                    // 与浏览器一致：host 返回 stale（外部源失败但仍有旧值）时按 TTL
+                    // 再试；只有请求本身失败才 15s 快速重试。
+                    if value.get("stale").and_then(Value::as_bool).unwrap_or(false) {
+                        eprintln!(
+                            "data stale: {} ({} ms)",
+                            need.kind,
+                            started.elapsed().as_millis()
+                        );
+                    }
+                    let next = need.ttl;
                     cache.insert(
                         key.clone(),
                         Entry {
@@ -229,6 +246,12 @@ fn spawn_fetch(
                     );
                 }
                 Err(e) => {
+                    eprintln!(
+                        "data error: {} after {} ms: {}",
+                        need.kind,
+                        started.elapsed().as_millis(),
+                        e
+                    );
                     let (fetched, mut value) = cache
                         .get(&key)
                         .map(|e| (e.fetched_ms, e.value.clone()))

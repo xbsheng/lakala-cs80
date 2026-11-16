@@ -142,6 +142,10 @@ pub trait Widget {
 - **数据拉取全部后台化**：`DataStore::get()` 只读缓存，TTL 到期时起后台线程刷新，
   渲染循环从不等待 `/api/data/*`；layout / screensaver 也由后台线程 2s 轮询。
   股票/资讯接口偶发 3–10s 时只显示旧值或“更新失败”，不会把动画冻住。
+- 后台数据请求和浏览器 `core.js` 对齐：外部源（portfolio/news/weather/crypto/github/kline）
+  串行拉取，避免并发被行情/热榜接口限流；超时 30s（浏览器没有 fetch 超时）；
+  host 返回 `stale` 按 TTL 重试，只有请求失败才 15s 快速重试。
+  失败/过期会在 journal 打 `data stale:` / `data error:` 便于定位。
 
 ## 6. 迁移阶段
 
