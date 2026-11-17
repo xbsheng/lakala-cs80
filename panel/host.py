@@ -3364,6 +3364,7 @@ def main():
         else type("D", (), {"status": {"device": "none"}, "last": None, "session": 0,
                             "user_brightness": None, "status_note": "no-device",
                             "send": lambda *a: False, "control": lambda *a: False,
+                            "flush_pending": lambda *a: None,
                             "audio": lambda *a, **k: {"ok": False, "err": "no-device"},
                             "upload_mp3": lambda *a, **k: {"ok": False, "err": "no-device"},
                             "play_file": lambda *a, **k: {"ok": False, "err": "no-device"}})()

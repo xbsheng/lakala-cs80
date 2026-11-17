@@ -137,7 +137,22 @@ fn main() -> Result<()> {
     loop {
         let started = Instant::now();
         let max_fps = fps.max(0.2);
-        let frame_time = if page_animated(&layout) || notifier.visible() {
+        // 没人看预览、推帧又在退避 → 10 Hz 渲染纯属空转，降到 1 Hz。
+        let preview_live = preview
+            .as_ref()
+            .map(|p| {
+                let recent = p.viewers.lock().map(|at| at.elapsed().as_secs() < 10).unwrap_or(false);
+                // 帧还没生成过（刚启动/刚有人第一个请求）就得先编一张，否则第一次拉是空 body。
+                let empty = p.frame.lock().map(|f| f.is_empty()).unwrap_or(false);
+                recent || empty
+            })
+            .unwrap_or(false);
+        let idle = !preview_live
+            && pusher.as_ref().map(|p| p.backing_off()).unwrap_or(true)
+            && !notifier.visible();
+        let frame_time = if idle {
+            Duration::from_secs(1)
+        } else if page_animated(&layout) || notifier.visible() {
             Duration::from_secs_f32(1.0 / max_fps)
         } else {
             Duration::from_secs(1)
@@ -180,7 +195,8 @@ fn main() -> Result<()> {
                 notifier.draw(&mut c, &theme, &mut assets);
             }
         }
-        if let Some(f) = &preview_frame {
+        // 没人拉 /preview.png（编辑器没开）就不必每秒编码一张 800×1280 PNG。
+        if let (Some(f), true) = (&preview_frame, preview_live) {
             // 弹窗动画期间预览跟着 10 Hz 刷新，否则编辑器里看到的是跳帧。
             let preview_every = if notifier.visible() {
                 Duration::from_millis(100)

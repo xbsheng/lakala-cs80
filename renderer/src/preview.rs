@@ -10,6 +10,8 @@ pub type PreviewPage = Arc<Mutex<Option<(String, Instant)>>>;
 pub struct Preview {
     pub frame: PreviewFrame,
     pub page: PreviewPage,
+    /// 最近一次有人拉 /preview.png 的时间：没人看就不用每秒编码 PNG。
+    pub viewers: Arc<Mutex<Instant>>,
 }
 
 fn cors() -> Vec<Header> {
@@ -43,6 +45,8 @@ pub fn start(addr: &str) -> Option<Preview> {
     let page: PreviewPage = Arc::new(Mutex::new(None));
     let shared = frame.clone();
     let requested = page.clone();
+    let viewers: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() - std::time::Duration::from_secs(600)));
+    let watched = viewers.clone();
     thread::spawn(move || {
         for request in server.incoming_requests() {
             let url = request.url().to_string();
@@ -55,6 +59,9 @@ pub fn start(addr: &str) -> Option<Preview> {
             }
             match path {
                 "/preview.png" => {
+                    if let Ok(mut at) = watched.lock() {
+                        *at = Instant::now();
+                    }
                     let data = shared.lock().map(|v| v.clone()).unwrap_or_default();
                     let mut resp = Response::from_data(data);
                     if let Ok(h) = Header::from_bytes(&b"Content-Type"[..], &b"image/png"[..]) {
@@ -91,5 +98,5 @@ pub fn start(addr: &str) -> Option<Preview> {
             }
         }
     });
-    Some(Preview { frame, page })
+    Some(Preview { frame, page, viewers })
 }

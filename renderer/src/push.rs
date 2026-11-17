@@ -11,6 +11,9 @@ pub struct Push {
     host: String,
     agent: ureq::Agent,
     prev: Option<Vec<u16>>,
+    /// 连续失败次数 / 下次重试时间：没接屏时别每帧都转 3 MB 整帧 + 刷日志。
+    fail_streak: u32,
+    retry_at: Option<std::time::Instant>,
     // 复用缓冲：每帧 4 MB 像素 + 2 MB BGR565 若重复分配，macOS malloc 不归还导致 RSS 翻倍。
     scratch: Vec<u16>,
     rgba: Vec<u8>,
@@ -25,17 +28,32 @@ impl Push {
             host: host.into().trim_end_matches('/').to_string(),
             agent,
             prev: None,
+            fail_streak: 0,
+            retry_at: None,
             scratch: Vec::new(),
             rgba: Vec::new(),
         }
     }
 
+    /// 退避中 = 这一帧无论渲染得多漂亮也发不出去（没接屏 / 设备掉线）。
+    pub fn backing_off(&self) -> bool {
+        self.retry_at.map(|at| std::time::Instant::now() < at).unwrap_or(false)
+    }
+
     pub fn reset(&mut self) {
         self.prev = None;
+        self.fail_streak = 0;
+        self.retry_at = None;
     }
 
     /// 返回 true 表示 host 已接收（入队）。
     pub fn push(&mut self, surface: &mut Surface) -> bool {
+        if let Some(at) = self.retry_at {
+            if std::time::Instant::now() < at {
+                return false; // 退避中：连像素转换都省了
+            }
+            self.retry_at = None;
+        }
         let mut curr = std::mem::take(&mut self.scratch);
         curr.resize(WIDTH * HEIGHT, 0);
         self.fill_bgr565(surface, &mut curr);
@@ -78,17 +96,19 @@ impl Push {
         }
         match self.post("/api/patch", &body) {
             Ok(true) => {
+                self.ok_reset();
                 self.prev = Some(curr);
                 self.scratch = prev;
                 true
             }
             Ok(false) => {
+                self.reject("patch");
                 self.prev = None;
                 self.scratch = curr;
                 false
             }
             Err(e) => {
-                eprintln!("push patch: {e}");
+                self.fail(e, "patch");
                 self.prev = None;
                 self.scratch = curr;
                 false
@@ -100,19 +120,49 @@ impl Push {
         let rgb = self.rgb888(surface);
         match self.post("/api/frame", &rgb) {
             Ok(true) => {
+                self.ok_reset();
                 self.prev = Some(curr.to_vec());
                 true
             }
             Ok(false) => {
+                self.reject("full");
                 self.prev = None;
                 false
             }
             Err(e) => {
-                eprintln!("push full: {e}");
+                self.fail(e, "full");
                 self.prev = None;
                 false
             }
         }
+    }
+
+    /// 连续失败按 0.5→1→2→4→8 s 退避；日志只在第 1 次、每 50 次和恢复时打，别把 journal 刷爆。
+    fn note_fail(&mut self, desc: String) {
+        self.fail_streak += 1;
+        if self.fail_streak == 1 || self.fail_streak % 50 == 0 {
+            eprintln!("{}（连续 {} 次失败，退避中）", desc, self.fail_streak);
+        }
+        let secs = 0.5 * 2f32.powi(self.fail_streak.min(5) as i32 - 1);
+        self.retry_at =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs_f32(secs.min(8.0)));
+    }
+
+    fn fail(&mut self, e: anyhow::Error, what: &str) {
+        self.note_fail(format!("push {what}: {e}"));
+    }
+
+    /// host 回了 ok=false：设备没接 / 掉线 / 固件拒收。
+    fn reject(&mut self, what: &str) {
+        self.note_fail(format!("push {what}: host 拒绝（设备未连接？）"));
+    }
+
+    fn ok_reset(&mut self) {
+        if self.fail_streak > 0 {
+            eprintln!("push 恢复（之前连续失败 {} 次）", self.fail_streak);
+        }
+        self.fail_streak = 0;
+        self.retry_at = None;
     }
 
     fn post(&self, path: &str, body: &[u8]) -> Result<bool> {
@@ -122,11 +172,7 @@ impl Push {
             .set("Content-Type", "application/octet-stream")
             .send_bytes(body)?;
         let v: Value = resp.into_json()?;
-        let ok = v.get("ok").and_then(Value::as_bool).unwrap_or(false);
-        if !ok {
-            eprintln!("push {path} rejected: {v}");
-        }
-        Ok(ok)
+        Ok(v.get("ok").and_then(Value::as_bool).unwrap_or(false))
     }
 
     fn fill_rgba(&mut self, surface: &mut Surface) -> (bool, usize) {
