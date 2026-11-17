@@ -1,8 +1,7 @@
 use std::time::Duration;
 
-use chrono::{Datelike, Local, Timelike};
 use serde_json::Value;
-use skia_safe::{Color, Rect};
+use skia_safe::Rect;
 
 use crate::canvas::{Align, Baseline, Canvas2D};
 use crate::data::Need;
@@ -12,14 +11,6 @@ use crate::widgets::common::{card, pct_color, signed};
 pub fn needs(cfg: &Value) -> Vec<Need> {
     let symbol = cfg.get("symbol").and_then(Value::as_str).unwrap_or("sh000001");
     vec![Need::new("kline", vec![("symbol".into(), symbol.into())], Duration::from_secs(120))]
-}
-
-fn trading_hours() -> bool {
-    let d = Local::now();
-    let day = d.weekday().num_days_from_sunday();
-    if day == 0 || day == 6 { return false; }
-    let m = d.hour() as i32 * 60 + d.minute() as i32;
-    (570..=690).contains(&m) || (780..=900).contains(&m)
 }
 
 pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme) {
@@ -69,6 +60,4 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme) {
         let y2 = y(o.min(cl));
         c.fill_rect(Rect::from_xywh(x - bw / 2.0, y1, bw, (y2 - y1).max(1.2)));
     }
-    let _ = trading_hours();
-    let _ = Color::TRANSPARENT;
 }

@@ -242,6 +242,8 @@ fn render_page(page: &LayoutPage, data: &DataStore, fonts: &Fonts, theme: &Theme
     surface
 }
 
+// raster surface 走 encode_to_data 没有替代 API（新 API 针对 GPU 上下文），保持弃用但可用。
+#[allow(deprecated)]
 fn encode_png(surface: &mut Surface) -> Vec<u8> {
     let image = surface.image_snapshot();
     image

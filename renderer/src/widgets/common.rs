@@ -6,8 +6,6 @@ use crate::theme::{Theme, CARD_BORDER};
 pub struct CardInner {
     pub rect: Rect,
     pub head_y: f32,
-    pub head_h: f32,
-    pub head_font: f32,
 }
 
 pub fn card(
@@ -36,8 +34,6 @@ pub fn card(
         return CardInner {
             rect: inner,
             head_y: box_.top + pad * 0.72,
-            head_h: 0.0,
-            head_font: 0.0,
         };
     }
 
@@ -60,15 +56,7 @@ pub fn card(
     CardInner {
         rect: Rect::from_xywh(inner.left, inner.top + head_h, inner.width(), inner.height() - head_h),
         head_y: box_.top + pad * 0.72,
-        head_h,
-        head_font: size,
     }
-}
-
-pub fn hairline(c: &mut Canvas2D, x1: f32, y1: f32, x2: f32, y2: f32) {
-    c.set_stroke(Color::from_argb(0x0f, 0xff, 0xff, 0xff));
-    c.set_line_width(1.0);
-    c.line(x1, y1, x2, y2);
 }
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -159,20 +147,6 @@ pub fn big_days(
         c.set_font(s * 0.42, 500, false);
         c.set_fill(t.fg3);
         c.fill_text(suffix, nx + nw + gap, y);
-    }
-}
-
-pub fn fresh_stamp(d: &Value) -> Option<(String, Color)> {
-    let ms = d.get("fetchedAt")?.as_i64()?;
-    if d.get("stale").and_then(Value::as_bool).unwrap_or(false) {
-        return Some(("更新失败·重取中".into(), Color::from_rgb(0xfa, 0xbe, 0x46)));
-    }
-    let at = Local.timestamp_millis_opt(ms).single()?;
-    let today = Local::now().date_naive() == at.date_naive();
-    if today {
-        Some((format!("{} 更新", at.format("%H:%M")), Color::TRANSPARENT))
-    } else {
-        Some((format!("{}", at.format("%-m/%-d %H:%M")), Color::TRANSPARENT))
     }
 }
 
@@ -278,16 +252,6 @@ pub fn stock_symbols(cfg: &Value) -> String {
         .or_else(|| cfg.get("symbols").and_then(Value::as_str))
         .unwrap_or("sh000001")
         .to_string()
-}
-
-pub fn trading_hours() -> bool {
-    let d = Local::now();
-    let day = d.weekday().num_days_from_sunday();
-    if day == 0 || day == 6 {
-        return false;
-    }
-    let m = d.hour() as i32 * 60 + d.minute() as i32;
-    (570..=690).contains(&m) || (780..=900).contains(&m)
 }
 
 pub fn minute_slots(symbol: &str) -> f32 {

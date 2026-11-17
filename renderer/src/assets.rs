@@ -2,9 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use skia_safe::{
-    svg::Dom, BlendMode, Color, Data, FontMgr, Image, Paint, Rect, Surface,
-};
+use skia_safe::{svg::Dom, surfaces, BlendMode, Color, Data, FontMgr, Image, Paint, Rect};
 
 use crate::canvas::Canvas2D;
 
@@ -82,7 +80,6 @@ impl History {
 }
 
 pub struct Assets {
-    web: PathBuf,
     cat: Vec<Image>,
     cat_tinted: HashMap<(usize, u32), Image>,
     logos: HashMap<String, Dom>,
@@ -115,17 +112,12 @@ impl Assets {
             }
         }
         Self {
-            web,
             cat,
             cat_tinted: HashMap::new(),
             logos,
             cat_state: CatState::default(),
             history: History::default(),
         }
-    }
-
-    pub fn web(&self) -> &PathBuf {
-        &self.web
     }
 
     pub fn cat_frame(&mut self, cpu: f32) -> usize {
@@ -148,7 +140,7 @@ impl Assets {
             let Some(src) = self.cat.get(frame) else {
                 return false;
             };
-            let mut surface = match Surface::new_raster_n32_premul((CAT_W as i32, CAT_H as i32)) {
+            let mut surface = match surfaces::raster_n32_premul((CAT_W as i32, CAT_H as i32)) {
                 Some(s) => s,
                 None => return false,
             };
