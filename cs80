@@ -1,0 +1,158 @@
+#!/bin/sh
+# CS80 客显屏：一个入口启停 host + Rust renderer。
+#
+#   ./cs80 start            # host + Rust renderer（默认，屏上出画面，内存 ~80 MB）
+#   ./cs80 start --chrome   # host + Chrome 编辑器窗口（浏览器即像素源）
+#   ./cs80 start --no-device# 只用编辑器设计布局，不碰 USB
+#   ./cs80 stop | restart | status | logs [-f]
+#
+# 日志：~/.cs80_panel/log/{host,renderer}.log    pid：~/.cs80_panel/run/
+set -e
+ROOT=$(cd "$(dirname "$0")" && pwd)
+RUN="$HOME/.cs80_panel/run"
+LOG="$HOME/.cs80_panel/log"
+HOST_PORT=${PORT:-8787}
+PREVIEW_PORT=${PREVIEW_PORT:-8788}
+FPS=${FPS:-10}
+BASE="http://127.0.0.1:$HOST_PORT"
+RENDERER="$ROOT/renderer/target/release/cs80-renderer"
+mkdir -p "$RUN" "$LOG"
+
+alive() { [ -f "$RUN/$1.pid" ] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
+pid_of() { cat "$RUN/$1.pid" 2>/dev/null; }
+
+stop_one() {
+  if alive "$1"; then
+    pid=$(pid_of "$1")
+    kill "$pid" 2>/dev/null || true
+    i=0
+    while kill -0 "$pid" 2>/dev/null && [ $i -lt 25 ]; do sleep 0.2; i=$((i+1)); done
+    kill -9 "$pid" 2>/dev/null || true
+    echo "stopped $1 (pid $pid)"
+  else
+    echo "$1: not running"
+  fi
+  rm -f "$RUN/$1.pid"
+}
+
+host_up() { curl -s -o /dev/null --max-time 2 "$BASE/api/status"; }
+
+ensure_sidecar() {
+  [ -x "$ROOT/panel/qdc1" ] && return 0
+  echo "building panel/qdc1 ..."
+  case $(uname -s) in
+    Darwin) ( cd "$ROOT/panel" && clang -O2 -o qdc1 qdc1.c lz4.c \
+              -framework IOKit -framework CoreFoundation ) || return 1 ;;
+    *)      ( cd "$ROOT/panel" && cc -O2 -o qdc1 qdc1.c lz4.c ) || return 1 ;;
+  esac
+}
+
+start_host() {
+  if host_up; then
+    echo "host: already up on $BASE"
+    return 0
+  fi
+  [ -x "$ROOT/panel/qdc1" ] || ensure_sidecar || echo "warning: sidecar 编译失败，屏不会亮（只有编辑器）"
+  nohup python3 "$ROOT/panel/host.py" --port "$HOST_PORT" "$@" \
+    >"$LOG/host.log" 2>&1 &
+  echo $! >"$RUN/host.pid"
+  i=0
+  while [ $i -lt 50 ]; do
+    host_up && { echo "host: up on $BASE (pid $(pid_of host), log $LOG/host.log)"; return 0; }
+    sleep 0.2; i=$((i+1))
+  done
+  echo "host 起不来，看 $LOG/host.log:" >&2
+  tail -5 "$LOG/host.log" >&2
+  return 1
+}
+
+start_renderer() {
+  if [ ! -x "$RENDERER" ]; then
+    echo "缺 $RENDERER" >&2
+    echo "先构建：cd renderer && cargo build --release（macOS 工具链见 renderer/README.md §10）" >&2
+    return 1
+  fi
+  if alive renderer; then
+    echo "renderer: already running (pid $(pid_of renderer))"
+    return 0
+  fi
+  nohup "$RENDERER" --host "$BASE" --push \
+    --preview-port "$PREVIEW_PORT" --fps "$FPS" \
+    >"$LOG/renderer.log" 2>&1 &
+  echo $! >"$RUN/renderer.pid"
+  sleep 1
+  alive renderer || { echo "renderer 起不来，看 $LOG/renderer.log:" >&2; tail -5 "$LOG/renderer.log" >&2; return 1; }
+  echo "renderer: pid $(pid_of renderer), ${FPS} Hz -> $BASE, preview :$PREVIEW_PORT/preview.png"
+}
+
+cmd_start() {
+  mode=renderer
+  host_args=""
+  for a in "$@"; do
+    case $a in
+      --chrome) mode=chrome ;;
+      --no-device) host_args="--no-device" ;;
+      *) echo "unknown arg: $a" >&2; exit 2 ;;
+    esac
+  done
+  start_host $host_args
+  if [ "$mode" = chrome ]; then
+    echo "chrome 模式：编辑器窗口就是像素源，别关它（最小化可以）"
+    exec sh "$ROOT/panel/run.sh"
+  fi
+  start_renderer
+  echo "OK — 屏上出画面；编辑器 http://127.0.0.1:$HOST_PORT （会自动认到 Rust 在推屏，只做编辑）"
+}
+
+cmd_status() {
+  alive host && echo "host:      running (pid $(pid_of host))" || echo "host:      stopped"
+  alive renderer && echo "renderer:  running (pid $(pid_of renderer))" || echo "renderer:  stopped"
+  if host_up; then
+    curl -s --max-time 3 "$BASE/api/status" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print("device:   ", d.get("device"), d.get("reason") or d.get("status_note") or "")
+print("last push:", d.get("last"), "ok=", d.get("ok"), "session=", d.get("session"))
+if d.get("needs_replug"):
+    print("WARN:     连续推帧失败，拔插 Type-C")
+r = d.get("ready") or {}
+if r:
+    print("ready:    ", {k: r.get(k) for k in ("block", "features")})
+usb = d.get("usb") or {}
+if usb:
+    print("usb:      ", usb)
+' 2>/dev/null || echo "status:    /api/status 解析失败"
+  else
+    echo "status:    host 未运行（$BASE 不通）"
+  fi
+  if alive renderer; then
+    ps -o rss=,pcpu= -p "$(pid_of renderer)" | awk '{printf "renderer:  RSS %.0f MB, CPU %s%%\n", $1/1024, $2}'
+  fi
+}
+
+cmd_logs() {
+  for f in host renderer; do
+    [ -f "$LOG/$f.log" ] && { echo "==> $LOG/$f.log"; }
+  done
+  if [ "$1" = "-f" ]; then
+    tail -n 20 -f "$LOG/host.log" "$LOG/renderer.log" 2>/dev/null
+  else
+    tail -n 20 "$LOG/host.log" 2>/dev/null
+    tail -n 20 "$LOG/renderer.log" 2>/dev/null
+  fi
+}
+
+cmd_stop() {
+  stop_one renderer
+  stop_one host
+  host_up && echo "warning: $BASE 还有响应（可能是你自己起的 host.py）" || true
+}
+
+case ${1:-status} in
+  start) shift; cmd_start "$@" ;;
+  stop) cmd_stop ;;
+  restart) cmd_stop; shift; cmd_start "$@" ;;
+  status) cmd_status ;;
+  logs) shift; cmd_logs "$@" ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
