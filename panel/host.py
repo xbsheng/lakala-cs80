@@ -996,22 +996,42 @@ def audio_to_mp3(data, name=""):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def tts_mp3(text):
-    """macOS：用 say 生成语音，再让 ffmpeg 转成设备能解的 MP3。"""
+def tts_mp3(text, voice="", rate=0):
+    """macOS：用 say 生成语音，再让 ffmpeg 转成设备能解的 MP3。
+
+    voice 为空时用系统默认音色（跟着系统语言走）；rate 是 say 的语速词/分（默认约 190）。
+    `say -v '?'` 可以列出本机音色，zh_CN 常见的是 Tingting。
+    """
     if sys.platform != "darwin":
         raise RuntimeError("say 播报只在 macOS 可用；其它平台请直接上传 MP3")
+    text = str(text or "").strip()
+    if not text:
+        raise RuntimeError("text 不能为空")
     ff = ffmpeg_path()
     if not ff:
         raise RuntimeError("需要 ffmpeg 才能把语音转成 MP3（brew install ffmpeg）")
     with tempfile.TemporaryDirectory() as d:
         aiff, mp3 = os.path.join(d, "say.aiff"), os.path.join(d, "say.mp3")
-        subprocess.run(["say", "-o", aiff, text], check=True, timeout=60)
+        cmd = ["say"]
+        if voice:
+            cmd += ["-v", str(voice)]
+        if rate:
+            cmd += ["-r", str(max(80, min(400, int(rate))))]
+        cmd += ["-o", aiff, text]
+        r = subprocess.run(cmd, capture_output=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError((r.stderr or b"").decode("utf-8", "replace").strip()[:160] or "say 失败")
         subprocess.run(
             [ff, "-y", "-loglevel", "error", "-i", aiff, "-codec:a", "libmp3lame", "-q:a", "5", mp3],
             check=True, timeout=120,
         )
         with open(mp3, "rb") as f:
-            return f.read()
+            data = f.read()
+    # 有些音色只是列表里有条目、没装中文数据：say 退出码 0 但产出近乎空白，
+    # 直接报错比往屏上传一段静音强。
+    if len(data) < 2000:
+        raise RuntimeError("音色 %s 没有产出语音（可能没装该语言数据）" % (voice or "默认"))
+    return data
 
 
 # ---------------- 数据源 ----------------
@@ -3283,7 +3303,9 @@ class Handler(BaseHTTPRequestHandler):
                 ev = self.device.upload_mp3(data)
             elif action == "say":
                 try:
-                    data = tts_mp3(str(body.get("text") or ""))
+                    data = tts_mp3(str(body.get("text") or ""),
+                                   str(body.get("voice") or ""),
+                                   int(body.get("rate") or 0))
                 except Exception as exc:
                     return self._send(400, {"error": str(exc)})
                 r = self.device.upload_mp3(data)

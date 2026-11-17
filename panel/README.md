@@ -207,7 +207,7 @@ export default {
 | `verify` | — | 读回设备文件大小 / XXH32 |
 | `diag` | — | 固件诊断（sub 8）：路由 / 硬件档位 / PA / 增益，只读 |
 | `route` | `value` 0..2 | 停止后改音频路由（0=speaker，正常值） |
-| `say` | `text` | macOS：`say` + `ffmpeg` 合成 MP3 后播放 |
+| `say` | `text`、`voice`（可选）、`rate`（可选 80–400） | macOS：`say` + `ffmpeg` 合成 MP3 后播放；`voice` 传 `say -v '?'` 里的名字（zh_CN 是 `Tingting`），不传就用系统默认音色；音色没装中文数据时返回 400 而不是上传一段静音 |
 
 实现：sidecar `0x05/0x06` → QDC1 `type 7/8`；主机按 16 KiB 分块上传并逐块等 ACK，
 文件 XXH32 在 Python 里算（装了 `xxhash` 会更快），按路径+大小+mtime 缓存。
