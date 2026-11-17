@@ -39,6 +39,7 @@ htmlcov/
 # ---- panel：sidecar 编译产物（按 README/docs 编译生成）----
 panel/qdc1
 panel/qdc1.exe
+panel/qdc1.new
 panel/*.obj
 panel/*.pdb
 

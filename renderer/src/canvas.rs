@@ -28,15 +28,24 @@ pub struct Fonts {
 impl Fonts {
     pub fn new() -> Self {
         let mgr = FontMgr::new();
+        // 先试 Linux 设备上的字体文件，再按家族名找系统字体（macOS CoreText / Linux fontconfig）。
         let sans = load_face(
             &mgr,
-            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-            "WenQuanYi Zen Hei",
+            &[
+                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                "/System/Library/Fonts/PingFang.ttc",
+                "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            ],
+            &["WenQuanYi Zen Hei", "PingFang SC", "Hiragino Sans GB"],
         );
         let mono = load_face(
             &mgr,
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-            "DejaVu Sans Mono",
+            &[
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                "/System/Library/Fonts/Menlo.ttc",
+                "/System/Library/Fonts/SFNSMono.ttf",
+            ],
+            &["DejaVu Sans Mono", "Menlo", "SF Mono"],
         );
         Self { sans, mono }
     }
@@ -50,11 +59,17 @@ impl Fonts {
     }
 }
 
-fn load_face(mgr: &FontMgr, path: &str, family: &str) -> Typeface {
-    Data::from_filename(path)
-        .and_then(|d| mgr.new_from_data(d, 0))
-        .or_else(|| mgr.match_family_style(family, FontStyle::normal()))
-        .unwrap_or_else(|| panic!("font not found: {path} / {family}"))
+fn load_face(mgr: &FontMgr, paths: &[&str], families: &[&str]) -> Typeface {
+    paths
+        .iter()
+        .find_map(|p| Data::from_filename(p).and_then(|d| mgr.new_from_data(d, 0)))
+        .or_else(|| {
+            families
+                .iter()
+                .find_map(|f| mgr.match_family_style(f, FontStyle::normal()))
+        })
+        .or_else(|| mgr.legacy_make_typeface(None, FontStyle::normal()))
+        .expect("no system typeface available")
 }
 
 #[derive(Clone)]
@@ -237,10 +252,6 @@ impl<'a> Canvas2D<'a> {
 
     pub fn fill_rect(&mut self, r: Rect) {
         self.canvas.draw_rect(r, &self.fill_paint());
-    }
-
-    pub fn stroke_rect(&mut self, r: Rect) {
-        self.canvas.draw_rect(r, &self.stroke_paint());
     }
 
     pub fn fill_rrect(&mut self, r: Rect, radius: f32) {
