@@ -294,9 +294,24 @@ for session in scan_sessions():
 - 没有 `pid` 的 hook 状态靠 `updatedAt` + session 文件/进程兜底
 - running 时输出 `runningFor` 秒数；UI 显示 `运行 5m`
 - 数据刷新：有 `running` 会话时 1 秒一次；没有 running 时保持 3 秒
-- 排序跟屏幕分档一致：`running` → `waiting` → 1 小时内的 `error` → 1 小时内的 `done`
-  → 其余（1 小时以上的 `done`/`error`、`idle`，这一档整体按新旧排）。
-  早先的 `order = {error: 2, done: 3}` 会让两天前的失败压在新会话上面，已改。
+- **显示语义单点**：`/api/data/agents` 的每个 item 带一个 `display` 对象，
+  由 `host._agent_display()` 一次算好；排序用的是同一个 `bucket`。
+  渲染端（`renderer/src/widgets/agent.rs`、`panel/web/widgets.js`）**只做 `tone` → 颜色映射**，
+  不许再各自推导"多少秒算旧""什么时候变灰""右侧写什么"，之前这类多实现已经出过不一致。
+
+  | 字段 | 含义 |
+  |---|---|
+  | `bucket` | 排序档：`0` running / `1` waiting / `2` error<1h / `3` done<1h / `4` 其余 |
+  | `tone` | 色调：`up` / `warn` / `bad` / `info` / `muted` |
+  | `muted` | 是否弱化（灰） |
+  | `blink` | 状态点呼吸 |
+  | `label` | 右侧短标签（空 = 用 `right`） |
+  | `right` | 右侧最终文案：`运行 3m` / `刚刚` / `10m` / `2h` / `异常退出` |
+
+  时长格式也在这里统一（`150s → 3m`，半分钟进一，避免各家舍入不一致）。
+  自检：`python3 panel/test_agent_display.py`。
+- 排序跟屏幕分档一致：直接按 `display.bucket`，再按 `age`。早先的
+  `order = {error: 2, done: 3}` 会让两天前的失败压在新会话上面，已废弃。
 
 匹配规则：
 

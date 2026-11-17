@@ -1010,22 +1010,14 @@ export const WIDGETS = {
         return;
       }
 
-      // 状态：绿=运行中（呼吸）· 琥珀=等待确认（呼吸）· 红=1 小时内异常退出 · 蓝=1 小时内结束 · 灰=更早（含异常退出）
+      // 档位 / 是否弱化 / 呼吸 / 右侧文案全部由 host 的 display 给出（语义单点），
+      // 这里只把 tone 映射成颜色。
       const pulse = 0.45 + 0.55 * Math.abs(Math.sin((Date.now() % 1600) / 1600 * Math.PI));
+      const TONE = { up: '#3ddc84', warn: '#fabe46', bad: '#ef6f6f', info: '#5aa9ff', muted: '#6b7280' };
+      const toneOf = (it) => (it.display && it.display.tone) || 'muted';
       const stateOf = (it) => {
-        if (it.state === 'running') return { color: '#3ddc84', label: '运行中', blink: true };
-        if (it.state === 'waiting') return { color: '#fabe46', label: '等待', blink: true };
-        if (it.state === 'error') {
-          return { color: (it.age || 0) < 3600 ? '#ef6f6f' : '#6b7280', label: '异常退出', blink: false };
-        }
-        if (it.state === 'done' && (it.age || 0) < 3600) return { color: '#5aa9ff', label: '', blink: false };
-        return { color: '#6b7280', label: '', blink: false };
-      };
-      const ageTxt = (secs) => {
-        if (secs < 60) return `${secs}s`;
-        if (secs < 3600) return `${Math.round(secs / 60)}m`;
-        if (secs < 86400) return `${Math.round(secs / 3600)}h`;
-        return `${Math.round(secs / 86400)}d`;
+        const d = it.display || {};
+        return { color: TONE[toneOf(it)] || TONE.muted, label: d.label || '', blink: Boolean(d.blink) };
       };
 
       const row0 = Math.max(40, Math.min(inner.w * 0.085, 96));
@@ -1038,10 +1030,8 @@ export const WIDGETS = {
         const y = inner.y + i * rowH;
         const cy = y + rowH / 2;
         const st = stateOf(it);
-        const age = Number(it.age || 0);
-        const isDone = it.state === 'done';
-        const isBlue = isDone && age < 3600;
-        const isGray = it.state === 'idle' || (isDone && age >= 3600) || (it.state === 'error' && age >= 3600);
+        const disp = it.display || {};
+        const isGray = disp.muted !== false;
         const alpha = st.blink ? pulse : isGray ? 0.45 : 1;
 
         // 状态点（运行中/等待确认会呼吸）
@@ -1075,18 +1065,14 @@ export const WIDGETS = {
         const titleW = inner.w - (titleX - inner.x) - chipW - 8;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = isGray ? t.fg4 : it.state === 'done' || it.state === 'error' ? t.fg2 : t.fg;
+        ctx.fillStyle = isGray ? t.fg4 : toneOf(it) === 'bad' || toneOf(it) === 'info' ? t.fg2 : t.fg;
         ctx.font = font(Math.max(14, Math.min(rowH * 0.36, 24)), 400);
         ctx.fillText(ellipsis(ctx, it.title || '', titleW), titleX, cy);
 
-        // 右侧：运行中显示已运行时长；等待/异常显示状态；结束显示距今年龄
+        // 右侧文案也是 host 算好的
         ctx.textAlign = 'right';
-        const runFor = it.runningFor == null ? NaN : Number(it.runningFor);
-        const runningTxt = it.state === 'running' && Number.isFinite(runFor)
-          ? `运行 ${ageTxt(Math.max(0, runFor))}` : '';
-        const agoTxt = isBlue && age < 60 ? '刚刚' : ageTxt(age);
-        const rightTxt = runningTxt || st.label || agoTxt;
-        const rightIsLabel = Boolean(runningTxt || st.label);
+        const rightTxt = disp.right || '';
+        const rightIsLabel = Boolean(st.label);
         ctx.font = font(Math.max(12, Math.min(rowH * 0.3, 19)), rightIsLabel ? 500 : 400, !rightIsLabel);
         ctx.globalAlpha = st.blink ? pulse : 1;
         ctx.fillStyle = st.color;

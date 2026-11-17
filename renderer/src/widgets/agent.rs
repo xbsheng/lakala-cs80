@@ -55,19 +55,22 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme, assets
     for (i, it) in items.iter().take(rows).enumerate() {
         let y = inner.rect.top + i as f32 * row_h;
         let cy = y + row_h / 2.0;
-        let state = it.get("state").and_then(Value::as_str).unwrap_or("");
-        let age = it.get("age").and_then(Value::as_i64).unwrap_or(0);
-        let (color, label, blink) = match state {
-            "running" => (Color::from_rgb(0x3d, 0xdc, 0x84), "运行中", true),
-            "waiting" => (Color::from_rgb(0xfa, 0xbe, 0x46), "等待", true),
-            "error" if age < 3600 => (Color::from_rgb(0xef, 0x6f, 0x6f), "异常退出", false),
-            "error" => (Color::from_rgb(0x6b, 0x72, 0x80), "异常退出", false),
-            "done" if age < 3600 => (Color::from_rgb(0x5a, 0xa9, 0xff), "", false),
-            _ => (Color::from_rgb(0x6b, 0x72, 0x80), "", false),
+        // 档位/弱化/呼吸/右侧文案都由 host 的 display 给出（语义单点），
+        // 这里只把 tone 映射成主题色。
+        let disp = it.get("display");
+        let field = |k: &str| disp.and_then(|d| d.get(k));
+        let tone = field("tone").and_then(Value::as_str).unwrap_or("");
+        let color = match tone {
+            "up" => Color::from_rgb(0x3d, 0xdc, 0x84),
+            "warn" => Color::from_rgb(0xfa, 0xbe, 0x46),
+            "bad" => Color::from_rgb(0xef, 0x6f, 0x6f),
+            "info" => Color::from_rgb(0x5a, 0xa9, 0xff),
+            _ => Color::from_rgb(0x6b, 0x72, 0x80),
         };
-        let gray = state == "idle"
-            || (state == "done" && age >= 3600)
-            || (state == "error" && age >= 3600);
+        let label = field("label").and_then(Value::as_str).unwrap_or("");
+        let right = field("right").and_then(Value::as_str).unwrap_or("");
+        let blink = field("blink").and_then(Value::as_bool).unwrap_or(false);
+        let gray = field("muted").and_then(Value::as_bool).unwrap_or(true);
         let alpha = if blink { pulse } else if gray { 0.45 } else { 1.0 };
         c.set_alpha(alpha);
         c.set_fill(color);
@@ -92,38 +95,22 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme, assets
         let title_w = inner.rect.right - title_x - chip_w - 8.0;
         c.set_align(Align::Left);
         c.set_baseline(Baseline::Middle);
-        c.set_fill(if gray { t.fg4 } else if state == "done" || state == "error" { t.fg2 } else { t.fg });
+        c.set_fill(if gray { t.fg4 } else if tone == "bad" || tone == "info" { t.fg2 } else { t.fg });
         c.set_font((row_h * 0.36).clamp(14.0, 24.0), 400, false);
         let title = it.get("title").and_then(Value::as_str).unwrap_or("");
         let title = c.ellipsis(title, title_w);
         c.fill_text(&title, title_x, cy);
         c.set_align(Align::Right);
-        let right = if state == "running" {
-            it.get("runningFor").and_then(Value::as_i64)
-                .map(|secs| format!("运行 {}", age_txt(secs)))
-                .unwrap_or_else(|| "运行中".into())
-        } else if label.is_empty() {
-            if state == "done" && age < 3600 && age < 60 {
-                "刚刚".into()
-            } else {
-                age_txt(age)
-            }
-        } else {
-            label.to_string()
-        };
-        c.set_font((row_h * 0.3).clamp(12.0, 19.0), if label.is_empty() { 400 } else { 500 }, label.is_empty());
+        c.set_font(
+            (row_h * 0.3).clamp(12.0, 19.0),
+            if label.is_empty() { 400 } else { 500 },
+            label.is_empty(),
+        );
         c.set_alpha(if blink { pulse } else { 1.0 });
         c.set_fill(color);
-        c.fill_text(&right, inner.rect.right, cy);
+        c.fill_text(right, inner.rect.right, cy);
         c.set_alpha(1.0);
     }
-}
-
-fn age_txt(secs: i64) -> String {
-    if secs < 60 { format!("{secs}s") }
-    else if secs < 3600 { format!("{}m", (secs as f64 / 60.0).round() as i64) }
-    else if secs < 86400 { format!("{}h", (secs as f64 / 3600.0).round() as i64) }
-    else { format!("{}d", (secs as f64 / 86400.0).round() as i64) }
 }
 
 fn now_ms() -> i64 {

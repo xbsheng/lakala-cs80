@@ -2299,6 +2299,47 @@ def _session_files(roots, limit=4):
     return files[:limit]
 
 
+# 档位（排序用）、色调（渲染层只做 名称→颜色 的映射）、右侧文案都在这里一次算好。
+# 渲染端（renderer/src/widgets/agent.rs、panel/web/widgets.js）不许再各自推导，
+# 之前「1 小时以上 error 变灰」「老 error 不该插队」这类规则就是多实现导致的不一致。
+_AGENT_TONES = ("up", "warn", "bad", "info", "muted")
+
+
+def _dur_txt(secs):
+    """150s → 3m（半分钟进一，别用 Python 的银行家舍入，否则和 JS/Rust 的直觉不一致）。"""
+    secs = max(0, int(secs or 0))
+    half = lambda n: int(n + 0.5)
+    if secs < 60:
+        return "%ds" % secs
+    if secs < 3600:
+        return "%dm" % half(secs / 60.0)
+    if secs < 86400:
+        return "%dh" % half(secs / 3600.0)
+    return "%dd" % half(secs / 86400.0)
+
+
+def _agent_display(state, age, running_for=None):
+    """一个会话在屏上的显示语义（唯一来源）。"""
+    age = max(0, int(age or 0))
+    if state == "running":
+        return {"tone": "up", "bucket": 0, "muted": False, "blink": True, "label": "运行中",
+                "right": "运行 %s" % _dur_txt(running_for) if running_for is not None else "运行中"}
+    if state == "waiting":
+        return {"tone": "warn", "bucket": 1, "muted": False, "blink": True,
+                "label": "等待", "right": "等待"}
+    if state == "error":
+        if age < 3600:
+            return {"tone": "bad", "bucket": 2, "muted": False, "blink": False,
+                    "label": "异常退出", "right": "异常退出"}
+        return {"tone": "muted", "bucket": 4, "muted": True, "blink": False,
+                "label": "异常退出", "right": "异常退出"}
+    if state == "done" and age < 3600:
+        return {"tone": "info", "bucket": 3, "muted": False, "blink": False,
+                "label": "", "right": "刚刚" if age < 60 else _dur_txt(age)}
+    return {"tone": "muted", "bucket": 4, "muted": True, "blink": False,
+            "label": "", "right": _dur_txt(age)}
+
+
 _AGENT_STATUS_MAP = {
     "running": "running",
     "waiting_confirmation": "waiting",
@@ -2481,23 +2522,11 @@ def agents():
                     "age": int(age),
                     "runningFor": running_for,
                     "updated": mtime,
+                    "display": _agent_display(state, age, running_for),
                 }
             )
-    # 排序要跟屏幕上的显示分档一致：1 小时以上的 done/error 已经变灰，
-    # 不能再按「error 优先」压在新会话上面，统一沉到最后一档按新旧排。
-    def _sort_key(it):
-        state, age = it["state"], it["age"]
-        if state == "running":
-            return (0, age)
-        if state == "waiting":
-            return (1, age)
-        if age < 3600 and state == "error":
-            return (2, age)
-        if age < 3600 and state == "done":
-            return (3, age)
-        return (4, age)
-
-    items.sort(key=_sort_key)
+    # 档位来自上面的 _agent_display，排序和显示不会再各说一套。
+    items.sort(key=lambda it: (it["display"]["bucket"], it["age"]))
     items = items[:12]  # 屏幕只看最靠前的几条
     running = sum(1 for it in items if it["state"] == "running")
     return {"items": items, "running": running, "alive": sorted(alive)}
