@@ -1010,12 +1010,14 @@ export const WIDGETS = {
         return;
       }
 
-      // 状态：绿=运行中（呼吸）· 琥珀=等待确认（呼吸）· 红=异常退出 · 蓝=1 小时内结束 · 灰=更早结束
+      // 状态：绿=运行中（呼吸）· 琥珀=等待确认（呼吸）· 红=1 小时内异常退出 · 蓝=1 小时内结束 · 灰=更早（含异常退出）
       const pulse = 0.45 + 0.55 * Math.abs(Math.sin((Date.now() % 1600) / 1600 * Math.PI));
       const stateOf = (it) => {
         if (it.state === 'running') return { color: '#3ddc84', label: '运行中', blink: true };
         if (it.state === 'waiting') return { color: '#fabe46', label: '等待', blink: true };
-        if (it.state === 'error') return { color: '#ef6f6f', label: '异常退出', blink: false };
+        if (it.state === 'error') {
+          return { color: (it.age || 0) < 3600 ? '#ef6f6f' : '#6b7280', label: '异常退出', blink: false };
+        }
         if (it.state === 'done' && (it.age || 0) < 3600) return { color: '#5aa9ff', label: '', blink: false };
         return { color: '#6b7280', label: '', blink: false };
       };
@@ -1039,7 +1041,7 @@ export const WIDGETS = {
         const age = Number(it.age || 0);
         const isDone = it.state === 'done';
         const isBlue = isDone && age < 3600;
-        const isGray = it.state === 'idle' || (isDone && age >= 3600);
+        const isGray = it.state === 'idle' || (isDone && age >= 3600) || (it.state === 'error' && age >= 3600);
         const alpha = st.blink ? pulse : isGray ? 0.45 : 1;
 
         // 状态点（运行中/等待确认会呼吸）

@@ -60,11 +60,14 @@ pub fn draw(c: &mut Canvas2D, r: Rect, cfg: &Value, d: &Value, t: &Theme, assets
         let (color, label, blink) = match state {
             "running" => (Color::from_rgb(0x3d, 0xdc, 0x84), "运行中", true),
             "waiting" => (Color::from_rgb(0xfa, 0xbe, 0x46), "等待", true),
-            "error" => (Color::from_rgb(0xef, 0x6f, 0x6f), "异常退出", false),
+            "error" if age < 3600 => (Color::from_rgb(0xef, 0x6f, 0x6f), "异常退出", false),
+            "error" => (Color::from_rgb(0x6b, 0x72, 0x80), "异常退出", false),
             "done" if age < 3600 => (Color::from_rgb(0x5a, 0xa9, 0xff), "", false),
             _ => (Color::from_rgb(0x6b, 0x72, 0x80), "", false),
         };
-        let gray = state == "idle" || (state == "done" && age >= 3600);
+        let gray = state == "idle"
+            || (state == "done" && age >= 3600)
+            || (state == "error" && age >= 3600);
         let alpha = if blink { pulse } else if gray { 0.45 } else { 1.0 };
         c.set_alpha(alpha);
         c.set_fill(color);

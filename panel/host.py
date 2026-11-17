@@ -2463,8 +2463,21 @@ def agents():
                     "updated": mtime,
                 }
             )
-    order = {"running": 0, "waiting": 1, "error": 2, "done": 3, "idle": 4}
-    items.sort(key=lambda it: (order.get(it["state"], 9), it["age"]))
+    # 排序要跟屏幕上的显示分档一致：1 小时以上的 done/error 已经变灰，
+    # 不能再按「error 优先」压在新会话上面，统一沉到最后一档按新旧排。
+    def _sort_key(it):
+        state, age = it["state"], it["age"]
+        if state == "running":
+            return (0, age)
+        if state == "waiting":
+            return (1, age)
+        if age < 3600 and state == "error":
+            return (2, age)
+        if age < 3600 and state == "done":
+            return (3, age)
+        return (4, age)
+
+    items.sort(key=_sort_key)
     items = items[:12]  # 屏幕只看最靠前的几条
     running = sum(1 for it in items if it["state"] == "running")
     return {"items": items, "running": running, "alive": sorted(alive)}

@@ -108,7 +108,7 @@ error
 - `waiting_confirmation`：显示 `等待`
 - `done`：1 小时内蓝色；不足 1 分钟显示 `刚刚`，之后显示 `5m` / `2h`
 - 灰色：`done` 超过 1 小时，或 `idle`（超过 1 天）；logo、标题、状态点一起弱化
-- `error`：显示 `异常退出`
+- `error`：显示 `异常退出`（红色；超过 1 小时和 `done` 一样变灰，不再抢眼）
 
 ## 3. Pi extension
 
@@ -294,6 +294,9 @@ for session in scan_sessions():
 - 没有 `pid` 的 hook 状态靠 `updatedAt` + session 文件/进程兜底
 - running 时输出 `runningFor` 秒数；UI 显示 `运行 5m`
 - 数据刷新：有 `running` 会话时 1 秒一次；没有 running 时保持 3 秒
+- 排序跟屏幕分档一致：`running` → `waiting` → 1 小时内的 `error` → 1 小时内的 `done`
+  → 其余（1 小时以上的 `done`/`error`、`idle`，这一档整体按新旧排）。
+  早先的 `order = {error: 2, done: 3}` 会让两天前的失败压在新会话上面，已改。
 
 匹配规则：
 
