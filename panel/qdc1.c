@@ -875,6 +875,21 @@ int main(int argc, char **argv) {
     close_link(&t);
     return ok ? 0 : 1;
   }
+  if (getenv("CS80_VERIFY")) { /* 只读：屏上 framebuffer 的 XXH32（和 waiting_page/page.meta 比，确认当前是哪张页） */
+    link_t t;
+    memset(&t, 0, sizeof t);
+    if (open_link(&t, iface)) {
+      printf("{\"verify\":false,\"err\":\"open\"}\n");
+      return 1;
+    }
+    reply_body[0] = reply_body[5] = 0;
+    send_cmd(&t, QD_VERIFY, 0, 0, 0, NULL, 0);
+    int ok = !wait_ack(&t, t.seq, 3) && reply_body[0] == 0;
+    printf("{\"verify\":%s,\"hash\":%u,\"hash_hex\":\"0x%08x\"}\n", ok ? "true" : "false",
+           reply_body[5], reply_body[5]);
+    close_link(&t);
+    return ok ? 0 : 1;
+  }
   if (probe) { /* 逐个端口发 HELLO，找出哪个是 QDC1 数据口 */
     int hits = 0;
 #ifdef _WIN32
