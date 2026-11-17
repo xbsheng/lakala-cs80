@@ -232,6 +232,18 @@ export default {
   `~/.cs80_panel/config.json`，host 重启、设备断电重连后会**恢复成你选的值**（固件上电默认 100，
   host 读一次状态发现不一致才下发）。想强制锁一个值：`CS80_BRIGHTNESS=100`（老行为）；
   想完全不闪就把亮度设 100 —— `<100` 时固件走 1 kHz 软件 PWM 调光，中间灰会轻微抖。
+- **夜间自动调光**：`~/.cs80_panel/config.json` 里写
+
+  ```json
+  "night": {"from": "00:00", "to": "07:00", "brightness": 5}
+  ```
+
+  host 每 30 秒看一次时间，窗口内把亮度压到 `brightness`（**最低 5**，`<5` 会被拒），
+  出窗口恢复 `brightness` 字段里的白天偏好；`from > to` 表示跨零点（如 `23:00 → 07:00`），
+  `{"night": {"enabled": false}}` 关闭。窗口内你在顶栏/按键手动改亮度，**这一夜听你的**，
+  而且不会把夜里那个值写成白天偏好。重连后被固件重置成 100 也会在下一次 tick 压回夜间值。
+  状态查询：`/api/status` 的 `night`（`{"active": true, "value": 5}`）。
+  自检：`python3 panel/test_night.py`。
 - **纯色自检**：侧栏「设备」卡片里的 白/灰/暗/蓝/黑 → `POST /api/device/pattern {"color":"gray"}`，
   host 直接在 Python 里合成 800×1280 BGR565 整帧走 sidecar 的 `0x04`（跟屏保同一条路），
   逐色看就知道是背光/供电（全闪）还是面板静态色闪（只有中间色闪）；

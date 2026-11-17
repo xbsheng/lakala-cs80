@@ -332,6 +332,87 @@ def screensaver_files():
     return files
 
 
+# 夜间调光：默认 00:00–07:00 拉到最低亮度 5；在 config.json 里写
+#   "night": {"from": "00:00", "to": "07:00", "brightness": 5}   ← 可改时间/亮度
+#   "night": {"enabled": false}                                   ← 关掉
+# from > to 表示跨零点（例如 23:00 → 07:00）。
+NIGHT_DEFAULT = {"from": "00:00", "to": "07:00", "brightness": 5}
+
+
+def _night_cfg():
+    cfg = load_config().get("night")
+    night = dict(NIGHT_DEFAULT)
+    if isinstance(cfg, dict):
+        night.update({k: v for k, v in cfg.items() if v is not None})
+    return night
+
+
+def _hm_minutes(text):
+    try:
+        hh, mm = str(text).split(":")[:2]
+        return max(0, min(24 * 60 - 1, int(hh) * 60 + int(mm)))
+    except Exception:
+        return None
+
+
+def _in_window(now_min, start_min, end_min):
+    if start_min is None or end_min is None or start_min == end_min:
+        return False
+    if start_min < end_min:
+        return start_min <= now_min < end_min
+    return now_min >= start_min or now_min < end_min  # 跨零点
+
+
+def _night_tick(device):
+    """一次判断：夜间窗口内压到最低亮度，出窗口恢复白天偏好。返回当前是否夜间。"""
+    night = _night_cfg()
+    if night.get("enabled") is False:
+        active = False
+    else:
+        now = time.localtime()
+        active = _in_window(now.tm_hour * 60 + now.tm_min,
+                            _hm_minutes(night.get("from")),
+                            _hm_minutes(night.get("to")))
+    value = max(5, min(100, int(night.get("brightness") or 5)))
+    if active:
+        override = getattr(device, "night_override", None)
+        if override is None:
+            # 以设备回报的亮度为准：重连后固件会回到 100，也要能再压回去
+            cur = (device.status.get("state") or {}).get("brightness")
+            if cur != value:
+                device.bright_expect = value
+                device.control(1, value)
+                device.night_value = value
+                print("night: 亮度 -> %d（设备当前 %s，窗口 %s-%s）"
+                      % (value, cur, night.get("from"), night.get("to")))
+            device.control(4)   # 顺带刷新一次状态，下一轮才好比对
+        device.night_active = True
+        # Device._spawn 会整体替换 status，所以每轮都写一遍，别只在切换时写
+        device.status["night"] = {"active": True, "value": value, "override": override}
+    else:
+        pref = getattr(device, "bright_pref", None)
+        if device.night_active and pref and hasattr(device, "_set_bright"):
+            device._set_bright(pref)   # 记住的是白天偏好，不会被夜间值覆盖
+            print("night: 退出夜间窗口，亮度恢复 %d" % pref)
+        device.night_active = False
+        device.night_override = None
+        device.night_value = None
+        device.status["night"] = {"active": False}
+    return active
+
+
+def _night_watch(device):
+    """每 30 s 看一次（时间窗判断/下发都在 _night_tick 里）。"""
+    print("night: 后台线程启动，窗口 %s-%s -> 亮度 %s" % (
+        _night_cfg().get("from"), _night_cfg().get("to"), _night_cfg().get("brightness")))
+    while True:
+        try:
+            _night_tick(device)
+        except Exception as exc:  # 旁路功能，坏了不能影响推屏
+            print("night watch: %s" % exc)
+        time.sleep(30)
+
+
 def load_config():
     """~/.cs80_panel/config.json：目前只存亮度偏好，以后可放其它全局设置。"""
     try:
@@ -555,6 +636,9 @@ class Device:
         self.last = None
         self.last_event = 0.0
         self.user_brightness = None  # 本进程里用户手动设过亮度
+        self.night_active = False    # 夜间调光是否生效
+        self.night_value = None      # 当前生效的夜间亮度
+        self.night_override = None   # 夜间窗口内用户手动改的亮度
         self.bright_pref = load_config().get("brightness")  # 用户偏好（持久化到 ~/.cs80_panel/config.json）
         self.bright_expect = None    # 我们刚发出去、还没确认的值
         self.need_restore = False    # 刚(重)连上：第一条 state 用来“恢复偏好”，不拿来学习
@@ -674,7 +758,9 @@ class Device:
             return False
         finally:
             err.close()
-        self.status = {"device": "connecting"}
+        # night 是夜间调光线程维护的字段，别被设备状态重置抹掉
+        self.status = {k: v for k, v in self.status.items() if k == "night"}
+        self.status["device"] = "connecting"
         self.last_event = time.time()
         threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
         return True
@@ -759,6 +845,14 @@ class Device:
             if cur != BRIGHTNESS_PIN:
                 self.bright_expect = BRIGHTNESS_PIN
                 self.control(1, BRIGHTNESS_PIN)
+            return
+        if self.night_active and self.night_override is None:
+            # 夜间调光自己压下去的亮度不是用户偏好：不学、不写 config，
+            # 重连被固件重置成 100 再拉回夜间值。
+            self.need_restore = False
+            self.bright_expect = None
+            if cur != self.night_value:
+                self.control(1, self.night_value or 5)
             return
         if self.need_restore:
             self.need_restore = False
@@ -3352,7 +3446,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "brightness 需要 5..100 且为 5 的倍数"})
             if cmd == 1:
                 self.device.user_brightness = arg
-                if hasattr(self.device, "_set_bright"):
+                if getattr(self.device, "night_active", False):
+                    # 夜间调光生效时用户手动改：这一夜听他的，别把 5 写成白天偏好
+                    self.device.night_override = arg
+                    self.device.bright_expect = arg
+                    self.device.control(cmd, arg)
+                elif hasattr(self.device, "_set_bright"):
                     self.device._set_bright(arg)   # 记住偏好 + 下发（不再几十秒后又刷回 100）
                 else:
                     self.device.control(cmd, arg)
@@ -3392,6 +3491,8 @@ def main():
         if not args.no_device
         else type("D", (), {"status": {"device": "none"}, "last": None, "session": 0,
                             "user_brightness": None, "status_note": "no-device",
+                            "night_active": False, "night_value": None, "night_override": None,
+                            "bright_pref": None, "bright_expect": None,
                             "send": lambda *a: False, "control": lambda *a: False,
                             "flush_pending": lambda *a: None,
                             "audio": lambda *a, **k: {"ok": False, "err": "no-device"},
@@ -3399,6 +3500,7 @@ def main():
                             "play_file": lambda *a, **k: {"ok": False, "err": "no-device"}})()
     )
     Handler.device = device
+    threading.Thread(target=_night_watch, args=(device,), daemon=True).start()
     global SAVER
     SAVER = Saver(device)
     srv = ThreadingHTTPServer((args.host, args.port), Handler)

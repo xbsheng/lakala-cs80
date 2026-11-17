@@ -27,7 +27,7 @@ renderer 在 **macOS（arm64）** 上也已实测可构建/出图/推帧（字�
 | Agent 状态 | 自动扫描本机 Pi / Claude Code / Codex / DeepSeek Harness 的会话，列表按「运行中 → 等待 → 结束」排序，可逐条隐藏；支持 Pi extension / Claude Code / Codex hooks 的精确状态和规则摘要标题，见 [`docs/agent-status.md`](docs/agent-status.md) |
 | 消息弹窗 | Agent 任务结束/异常时，屏幕顶部落下 iOS 风格通知横幅（App 图标 + 标题 + `任务完成 · 用时 3m`），弹性落下 → 停留 5 s → 缓慢淡出；叠在任何页面之上 |
 | 屏保 | 选视频（内置 `wallpaper.mp4`，也可用 `panel/add-screensaver.sh` 转自己的），手动播或锁屏自动播 |
-| 控屏 | 亮度（5–100）、待机/唤醒、设备状态回读 |
+| 控屏 | 亮度（5–100，可设夜间时段自动压到最低）、待机/唤醒、设备状态回读 |
 | 喇叭 | 独立「音频播放」面板：任意格式（WAV / FLAC / M4A / OGG / 视频音轨…）→ ffmpeg 转 128 kbps MP3 再上传（≤4 MiB），音量 / 停止 / 播放自愈；固件只解 MP3，转码在主机侧，PLAY 撞到 BAD_STATE 会自动修音频路由后重试 |
 | 自检 | 每帧用 `VERIFY` 回读设备 framebuffer 哈希，patch 链哈希必须对上才算成功 |
 | Home Assistant | 5×2 全屋概览：室内温度/湿度、室外天气、空调、开关/插座、功率、音箱；走本机 HA REST API，token 只留在 host，组件只传 entity_id |
