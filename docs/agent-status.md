@@ -146,7 +146,12 @@ curl -s 127.0.0.1:8787/api/data/agents | python3 -m json.tool | head -30
 | `ui_prompt_end` | `running` 或 `done` |
 | `tool_execution_start` | `running`（记录 `tool`） |
 | `tool_execution_end` | 保持 `running`（模型还会继续） |
-| `agent_settled` | `done` |
+| `agent_end` | 记下这一轮消息的 `stopReason`；有 `error` / `aborted` 就标记失败 |
+| `agent_settled` | `error`（这一轮失败过）/ `done` |
+
+> 失败必须由扩展自己写 `error`：sidecar 状态优先级高于 host 的 JSONL 推断，
+> 之前扩展在 `agent_settled` 里一律写 `done`，网络中断/取消的会话就会显示成**蓝色**而不是红色。
+> 自动重试会再走一次 `agent_start`，失败标记在那时清掉，重试成功仍然算 `done`。
 | `session_shutdown` | 删除状态文件 |
 
 关键点：

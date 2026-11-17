@@ -147,6 +147,9 @@ export default function (pi) {
   /** @type {number | null} */
   let runningSince = null;
   let active = false;
+  // 这一轮是否以 error/aborted 结束。Pi 的 agent_end 里能看到每条消息的 stopReason，
+  // 不记这个就只能靠 host 扫 JSONL，而 sidecar 状态优先级更高 → 失败会被显示成 done（蓝）。
+  let runFailed = false;
 
   /** @param {AgentState} state @param {Record<string, unknown>} [extra] */
   function publish(state, extra = {}) {
@@ -242,8 +245,17 @@ export default function (pi) {
 
   pi.on("agent_start", () => {
     active = true;
+    runFailed = false; // 自动重试会再走一次 agent_start，成功的话要把失败标记清掉
     if (runningSince == null) runningSince = Date.now();
     publish("running");
+  });
+
+  pi.on("agent_end", (event) => {
+    for (const m of event.messages || []) {
+      if (m && m.role === "assistant" && (m.stopReason === "error" || m.stopReason === "aborted")) {
+        runFailed = true;
+      }
+    }
   });
 
   pi.on("ui_prompt_start", (event) => {
@@ -271,7 +283,7 @@ export default function (pi) {
     active = false;
     tool = null;
     if (!promptKind) runningSince = null;
-    publish(promptKind ? "waiting_confirmation" : "done");
+    publish(promptKind ? "waiting_confirmation" : runFailed ? "error" : "done");
   });
 
   pi.on("session_shutdown", () => {
