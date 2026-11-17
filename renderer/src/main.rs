@@ -36,6 +36,11 @@ fn main() -> Result<()> {
     let mut preview_port = 8788u16;
     let mut preview_bind = "0.0.0.0".to_string();
     let mut fps = 5.0f32;
+    let mut notify_sound: Option<String> = Some(format!(
+        "{}/../docs/assets/audio/计时器结束提示音.mp3",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    let mut notify_volume = 20u8;
 
     let args: Vec<String> = env::args().skip(1).collect();
     let mut i = 0;
@@ -47,6 +52,15 @@ fn main() -> Result<()> {
             "--preview-port" if i + 1 < args.len() => { preview_port = args[i + 1].parse().unwrap_or(8788); i += 2; }
             "--preview-bind" if i + 1 < args.len() => { preview_bind = args[i + 1].clone(); i += 2; }
             "--fps" if i + 1 < args.len() => { fps = args[i + 1].parse::<f32>().unwrap_or(1.0).max(0.2); i += 2; }
+            "--notify-sound" if i + 1 < args.len() => {
+                let v = args[i + 1].clone();
+                notify_sound = if v == "off" || v.is_empty() { None } else { Some(v) };
+                i += 2;
+            }
+            "--notify-volume" if i + 1 < args.len() => {
+                notify_volume = args[i + 1].parse::<u8>().unwrap_or(20).min(100);
+                i += 2;
+            }
             "--push" => { push_enabled = true; i += 1; }
             "--once" => { once = true; i += 1; }
             other => { eprintln!("unknown arg: {other}"); i += 1; }
@@ -60,11 +74,20 @@ fn main() -> Result<()> {
     let theme = Theme::default();
     let mut assets = Assets::new();
     // 顶部消息弹窗；CS80_NOTIFY_DEMO=1 启动就来一条，方便看动效。
-    let mut notifier = if env::var_os("CS80_NOTIFY_DEMO").is_some() {
-        notify::Notifier::demo()
-    } else {
-        notify::Notifier::new()
-    };
+    let mut notifier = notify::Notifier::new(&host, notify_sound.and_then(|p| {
+        if std::path::Path::new(&p).exists() {
+            Some((
+                fs::canonicalize(&p).map(|c| c.display().to_string()).unwrap_or(p),
+                notify_volume,
+            ))
+        } else {
+            eprintln!("notify sound: 文件不存在 -> {p}（用 --notify-sound off 关掉）");
+            None
+        }
+    }));
+    if env::var_os("CS80_NOTIFY_DEMO").is_some() {
+        notifier.push_demo();
+    }
 
     if once {
         let page = layout.active_page();

@@ -341,5 +341,9 @@ Agent 任务结束时在屏幕上方弹一条 iOS 风格通知，叠在**任何�
   （`任务完成 · 用时 3m`、`本轮异常结束`）。
 - 动画期间渲染循环自动升到 `--fps`（10 Hz，硬件上限），预览 PNG 也跟到 10 Hz；
   屏保播放时弹窗跟着暂停，不抢屏保帧。
+- 提示音：弹窗出现时渲染线程另起一个线程 `POST /api/audio`（先 `volume` 再 `play`），
+  默认播 `docs/assets/audio/计时器结束提示音.mp3`、音量 20。
+  `--notify-sound <file|off>` / `--notify-volume 0-100` 可改；文件不存在会打一行提示并自动静音。
+  音量是设备全局的，设成 20 之后会一直保持。
 - 调试：`CS80_NOTIFY_DEMO=1 ./target/release/cs80-renderer --preview-port 8789` 启动即弹一条，方便看动效。
 - 浏览器编辑器里的 grid 预览仍是 JS，看不到这个弹窗（设备端和 `/preview.png` 才有）。
