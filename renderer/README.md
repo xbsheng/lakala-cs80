@@ -275,3 +275,51 @@ sudo systemctl enable --now cs80-kiosk
 - 新 renderer 作为独立 systemd 服务，不删除 `cs80-kiosk.service`；
 - 通过启用/停用服务切换；layout/host/qdc1 不变；
 - 如果 parity/内存不达标，直接停用新服务，回退 Chromium。
+
+## 10. macOS
+
+macOS（arm64）上已实测：构建、单帧出图、`/preview.png`、`/preview/page`、live host 取数、
+**真机推帧**（`device=up`、`patch ok=1`、`wire` 约 2–5 KB/帧、`wait_ms` 2–3）全部跑通。
+
+**构建前置**（Homebrew）：
+
+```bash
+brew install ninja llvm      # skia m157 要 C++20 <ranges>，Xcode 14 的 clang 14 编不过
+export PATH=/opt/homebrew/opt/llvm/bin:$PATH
+export CC=clang CXX=clang++
+export CFLAGS="-isysroot $(xcrun --show-sdk-path)"
+export CXXFLAGS="$CFLAGS -stdlib=libc++"
+cargo build --release        # 首次走 skia 源码构建，约 10 分钟
+```
+
+`skia-safe 0.157` 在 `aarch64-apple-darwin` 上没有预编译包（`binary-cache` 也只会 404），
+所以必须源码构建；Xcode 16+ 自带的 clang 应该可以直接编，Xcode 14 不行。
+
+**字体**（`src/canvas.rs`）：先试 Linux 字体文件，找不到再按家族名找系统字体 ——
+中文 `PingFang SC` / `Hiragino Sans GB`，等宽 `Menlo`；Linux 设备仍用 wqy-zenhei + DejaVu Sans Mono。
+`measureText` 度量会随字体变，Mac 上中文字宽和 Linux 略不同（换行/省略号位置可能差 1–2 px）。
+
+**运行**（host 照常 `python3 panel/host.py`，sidecar 用 macOS 版 `panel/qdc1`）：
+
+```bash
+cd renderer
+./target/release/cs80-renderer --preview-port 8788 --fps 10            # 只预览
+./target/release/cs80-renderer --push --preview-port 0 --fps 10        # 推真机
+./target/release/cs80-renderer --layout test-p3.json --once --out /tmp/x.png
+```
+
+macOS 没有 systemd：日常用仓库根目录的 `./cs80 start|stop|status|logs`（后台 pid + 日志在
+`~/.cs80_panel/`），要开机自启再自己写 `launchd`；`deploy/cs80-renderer.service` 不要直接抄到 Mac。
+
+**实测（MacBook arm64，M 芯片，live layout，10 Hz）**
+
+| 项目 | 结果 |
+|---|---|
+| release 二进制 | 19.6 MB（动态链接系统 libc++/CoreText/CoreGraphics） |
+| 预览模式 RSS | **42 MB**，CPU 4% 单核 |
+| `--push` 模式 RSS | **52–79 MB**（稳定不涨），CPU 5–9% |
+| 真机链路 | `device=up`、`last=patch`、`ok=1`、`session=1`；`wire` 2–5 KB、`wait_ms` 2–3 |
+| 对比 | 同机 Chromium kiosk 约 894 MB RSS |
+
+`--push` 每帧原本要新分配 4 MB 像素 + 2 MB BGR565，macOS 的 malloc 不还给系统，
+RSS 会爬到 146 MB；`push.rs` 现在复用 `scratch`/`rgba` 缓冲（prev/scratch 互换），降回 79 MB。

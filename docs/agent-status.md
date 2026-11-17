@@ -125,6 +125,17 @@ cp examples/agent-status/pi-cs80-status.js ~/.pi/agent/extensions/
 
 然后在 Pi 里执行 `/reload`。Pi 会自动发现 `~/.pi/agent/extensions/*.js` / `*.ts`；不需要改 `settings.json`。
 
+验证（`./cs80 status` 确认 host 在跑）：
+
+```bash
+ls ~/.cs80_panel/agent-status/pi/          # 每个活着的 Pi 会话一个 <sessionId>.json
+cat ~/.cs80_panel/agent-status/pi/*.json | head -c 400
+curl -s 127.0.0.1:8787/api/data/agents | python3 -m json.tool | head -30
+```
+
+状态文件只在 Pi 进程活着时可信（host 会核对 `pid`）；退出会话会自动删。
+没看到文件 = 没 `reload` 或扩展报错，在 Pi 里 `/extensions` 看一眼。
+
 ### 事件映射
 
 | Pi 事件 | 状态 |

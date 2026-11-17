@@ -14,6 +14,8 @@
 Linux 无桌面设备端从 2026-11 起默认改为 **`renderer/` 的 Rust + skia-safe 渲染器**直接推帧，
 `cs80-kiosk` 的 headless Chromium 保留为回退；编辑器仍在浏览器，自定义页面改为 Rust `RustPage`，
 预览走 renderer 的 `http://<host>:8788/preview.png`。切换/回退见 [`renderer/README.md`](renderer/README.md)。
+renderer 在 **macOS（arm64）** 上也已实测可构建/出图/推帧（字体走 PingFang SC + Menlo），见
+[`renderer/README.md`](renderer/README.md#10-macos)。
 
 ## 能做什么
 
@@ -58,6 +60,22 @@ py\python.exe flash_oneclick.py --yes       :: 全自动
 刷完看画面：`panel\run-windows.cmd`，或直接双击打包好的 `cs80-panel.exe`。
 日志与原厂备份都在 `win-flash/dumps/`（备份的才是刷机前那一份，别删）。
 细节见 [`docs/firmware.md`](docs/firmware.md) §0.6；为什么要先降级见 §0.5。
+
+## 日常启停（`./cs80`）
+
+仓库根目录的 `cs80` 脚本把 host 和 Rust renderer 管起来，Mac / Linux 通用（Windows 用 `panel\run-windows.cmd`）：
+
+```bash
+./cs80 start              # host + Rust renderer（默认；屏上出画面，内存 ~50-80 MB）
+./cs80 start --no-device  # 只开编辑器设计布局，不碰 USB
+./cs80 start --chrome     # 改用 Chrome 窗口当像素源（旧路径，~900 MB 内存）
+./cs80 status             # 进程 + 设备状态 + renderer 内存
+./cs80 logs -f            # 跟日志（~/.cs80_panel/log/）
+./cs80 stop               # 先停 renderer 再停 host
+./cs80 restart
+```
+
+不装脚本也能手跑：`python3 panel/host.py` + `renderer/target/release/cs80-renderer --push --fps 10`。
 
 ## 买第二台设备怎么接（10 步）
 
