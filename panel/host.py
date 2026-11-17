@@ -1158,10 +1158,25 @@ def _sina_quote(symbol):
     if not m or not m.group(1):
         raise RuntimeError("无数据（需要有效代码，如 sh000001 / sz399001 / sh600519）")
     f = m.group(1).split(",")
-    if symbol.startswith(("sh000", "sz399", "sh950")):
+    is_index = symbol.startswith(("sh000", "sz399", "sh950"))
+    if is_index:
         name, price, prev = f[0], float(f[1]), float(f[2])
     else:
         name, price, prev = f[0], float(f[3]), float(f[2])
+    premarket = False
+    if price <= 0:
+        # 9:15–9:25 集合竞价阶段新浪 f[3] 是 0，但买一/卖一已有报价；
+        # 用买一/卖一或昨收兜底，避免组件显示 0.00 / -100%。
+        if not is_index:
+            try:
+                bid = float(f[6]) if len(f) > 6 else 0.0
+                ask = float(f[7]) if len(f) > 7 else 0.0
+            except ValueError:
+                bid = ask = 0.0
+            price = bid or ask or prev
+        else:
+            price = prev
+        premarket = True
     return {
         "symbol": symbol0,
         "name": name,
@@ -1169,7 +1184,8 @@ def _sina_quote(symbol):
         "prev": prev,
         "change": round(price - prev, 3),
         "pct": round((price - prev) / prev * 100, 2) if prev else 0.0,
-        "source": "sina",
+        "source": "sina-auction" if premarket else "sina",
+        "premarket": premarket,
     }
 
 
@@ -1306,6 +1322,11 @@ def _sina_cn_minute(symbol):
     if not arr:
         raise RuntimeError("没有分时数据")
     day = str(arr[-1].get("day"))[:10]
+    today = datetime.datetime.now(
+        datetime.timezone(datetime.timedelta(hours=8))
+    ).strftime("%Y-%m-%d")
+    if day != today:
+        raise RuntimeError("没有今日分时数据")
     rows = [r for r in arr if str(r.get("day"))[:10] == day]
     if not rows:
         raise RuntimeError("没有分时数据")
@@ -1345,6 +1366,10 @@ def _em_quote(symbol):
     prev = data.get("f60", 0) / 100.0
     high = data.get("f44", 0) / 100.0
     low = data.get("f45", 0) / 100.0
+    premarket = False
+    if price <= 0 and prev > 0:
+        price = prev
+        premarket = True
     return {
         "symbol": symbol,
         "name": data.get("f58") or symbol,
@@ -1355,6 +1380,7 @@ def _em_quote(symbol):
         "change": round(price - prev, 3),
         "pct": round((price - prev) / prev * 100, 2) if prev else 0.0,
         "source": "eastmoney",
+        "premarket": premarket,
     }
 
 
@@ -1371,6 +1397,8 @@ def stock(symbol):
         try:
             row = ef.stock.get_latest_quote([_plain(symbol)]).iloc[0]
             price, prev = float(row["最新价"]), float(row["昨日收盘"])
+            if price <= 0:
+                raise RuntimeError("盘前无成交价")
             return {
                 "symbol": symbol,
                 "name": str(row.get("股票名称") or row.get("名称") or symbol),
@@ -1390,6 +1418,8 @@ def stock(symbol):
             df = ak.stock_bid_ask_em(symbol=_plain(symbol))
             row = dict(zip(df["item"], df["value"]))
             price, prev = float(row["最新"]), float(row["昨收"])
+            if price <= 0:
+                raise RuntimeError("盘前无成交价")
             return {
                 "symbol": symbol,
                 "name": symbol,
@@ -1545,7 +1575,11 @@ def _pf_item(sym):
     prev = _PF_LAST.get(sym)
     try:
         q = stock(sym)
-        if not q.get("prev") and not q.get("price"):  # 空快照（开盘前/接口抽风）当失败处理
+        try:
+            price = float(q.get("price") or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        if price <= 0:  # 空快照/盘前无报价（接口抽风）当失败处理
             raise RuntimeError("空快照")
     except Exception:
         if prev:

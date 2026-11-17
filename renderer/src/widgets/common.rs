@@ -541,7 +541,7 @@ pub fn stock_row(c: &mut Canvas2D, r: Rect, item: &Value, t: &Theme, card: bool,
     }
     let price = item.get("price").and_then(Value::as_f64);
     let prev = item.get("prev").and_then(Value::as_f64);
-    let has_quote = price.is_some() && prev.is_some();
+    let has_quote = price.is_some_and(|p| p > 0.0) && prev.is_some();
     let pct = item.get("pct").and_then(Value::as_f64).unwrap_or(0.0);
     let up = pct >= 0.0;
     let color = if has_quote { if up { t.up } else { t.down } } else { t.fg4 };
@@ -562,7 +562,11 @@ pub fn stock_row(c: &mut Canvas2D, r: Rect, item: &Value, t: &Theme, card: bool,
         r.top + r.height() * 0.58,
     );
     let price_w = (r.width() * 0.26).min((r.width() * 0.22).max(84.0));
-    let price_txt = price.map(|p| format!("{p:.2}")).unwrap_or_else(|| "—".into());
+    let price_txt = if has_quote {
+        price.map(|p| format!("{p:.2}")).unwrap_or_else(|| "—".into())
+    } else {
+        "—".into()
+    };
     let pct_txt = if has_quote { format!("{}{:.2}%", if up { "+" } else { "" }, pct) } else { String::new() };
     c.set_align(Align::Right);
     c.set_fill(color);

@@ -89,14 +89,15 @@ export default {
     ctx.strokeStyle = 'rgba(255,255,255,.06)';
     ctx.stroke();
 
+    const hasQuote = lead.price != null && Number(lead.price) > 0 && lead.prev != null;
     const up = (lead.pct ?? 0) >= 0;
-    const color = up ? UP : DOWN;
+    const color = hasQuote ? (up ? UP : DOWN) : FG4;
     ctx.textAlign = 'left';
     ctx.fillStyle = FG3;
     ctx.font = font(24, 500);
     ctx.fillText(ellipsis(ctx, lead.name || lead.symbol, w * 0.5), pad + 28, cardY + 26);
-    const priceTxt = Number(lead.price ?? 0).toFixed(2);
-    const pctTxt = `${up ? '+' : ''}${Number(lead.pct ?? 0).toFixed(2)}%`;
+    const priceTxt = hasQuote ? Number(lead.price).toFixed(2) : '—';
+    const pctTxt = hasQuote ? `${up ? '+' : ''}${Number(lead.pct ?? 0).toFixed(2)}%` : '';
     const priceY = cardY + 66;
     ctx.fillStyle = color; // 现价跟涨跌同色
     ctx.font = font(72, 300, true);

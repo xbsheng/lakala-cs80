@@ -63,8 +63,10 @@ impl RustPage for StockPage {
         c.stroke_rrect(Rect::from_xywh(pad, card_y, w - pad * 2.0, card_h), 12.0);
 
         let pct = lead.get("pct").and_then(Value::as_f64).unwrap_or(0.0);
+        let price = lead.get("price").and_then(Value::as_f64).unwrap_or(0.0);
+        let has_quote = price > 0.0 && lead.get("prev").and_then(Value::as_f64).is_some();
         let up = pct >= 0.0;
-        let color = if up { t.up } else { t.down };
+        let color = if has_quote { if up { t.up } else { t.down } } else { t.fg4 };
         let name = lead.get("name").and_then(Value::as_str)
             .or_else(|| lead.get("symbol").and_then(Value::as_str)).unwrap_or("");
         c.set_align(Align::Left);
@@ -72,9 +74,8 @@ impl RustPage for StockPage {
         c.set_font(24.0, 500, false);
         let name = c.ellipsis(name, w * 0.5);
         c.fill_text(&name, pad + 28.0, card_y + 26.0);
-        let price = lead.get("price").and_then(Value::as_f64).unwrap_or(0.0);
-        let price_txt = format!("{price:.2}");
-        let pct_txt = format!("{}{:.2}%", if up { "+" } else { "" }, pct);
+        let price_txt = if has_quote { format!("{price:.2}") } else { "—".into() };
+        let pct_txt = if has_quote { format!("{}{:.2}%", if up { "+" } else { "" }, pct) } else { String::new() };
         c.set_fill(color);
         c.set_font(72.0, 300, true);
         let price_w = c.measure_text(&price_txt);

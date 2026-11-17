@@ -546,7 +546,7 @@ export function stockRow(ctx, r, item, t, opts = {}) {
     ctx.fillStyle = t.cardHi;
     ctx.fill();
   }
-  const hasQuote = item.price != null && item.prev != null;
+  const hasQuote = item.price != null && Number(item.price) > 0 && item.prev != null;
   const up = (item.pct ?? 0) >= 0;
   const color = hasQuote ? (up ? t.up : t.down) : t.fg4;
 
