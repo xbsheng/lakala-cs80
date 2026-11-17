@@ -104,6 +104,7 @@ renderer/
     push.rs          # BGR565、整帧/局部、HTTP keep-alive、重试
     canvas.rs        # Skia Surface + Canvas2D 薄封装（fillText/measureText/path/rrect…）
     theme.rs         # THEME 颜色/字体
+    notify.rs        # 顶部通知横幅（Agent 任务结束触发）
     assets.rs        # 字体、PNG、SVG→PNG、RunCat、agent logo
     lunar.rs         # lunar.js 1900–2100 表移植
     widgets/
@@ -323,3 +324,22 @@ macOS 没有 systemd：日常用仓库根目录的 `./cs80 start|stop|status|log
 
 `--push` 每帧原本要新分配 4 MB 像素 + 2 MB BGR565，macOS 的 malloc 不还给系统，
 RSS 会爬到 146 MB；`push.rs` 现在复用 `scratch`/`rgba` 缓冲（prev/scratch 互换），降回 79 MB。
+
+## 11. 顶部消息弹窗（`src/notify.rs`）
+
+Agent 任务结束时在屏幕上方弹一条 iOS 风格通知，叠在**任何页面**之上（grid 页和 Rust 自定义页都有）：
+
+| 阶段 | 时长 | 动效 |
+|---|---|---|
+| 进入 | 380 ms | 从屏幕外落下到 y=26，`easeOutBack` 末端轻微回弹；同时 0→100% 淡入 |
+| 停留 | 5 s | 静止 |
+| 退出 | 560 ms | 上移 44 px + `easeInOut` 淡出 |
+
+- 触发：`/api/data/agents` 里同一会话 `running`/`waiting` → `done`/`error` 的跳变（冷启动不补弹历史），
+  所以只在 renderer 里做，不需要 host 改协议；最多排队 3 条，依次播放。
+- 内容：App 图标（`panel/web/logos/*.svg`）+ App 名 + `刚刚` / 会话标题（Pi 扩展写的 `project · 摘要`）/ 正文
+  （`任务完成 · 用时 3m`、`本轮异常结束`）。
+- 动画期间渲染循环自动升到 `--fps`（10 Hz，硬件上限），预览 PNG 也跟到 10 Hz；
+  屏保播放时弹窗跟着暂停，不抢屏保帧。
+- 调试：`CS80_NOTIFY_DEMO=1 ./target/release/cs80-renderer --preview-port 8789` 启动即弹一条，方便看动效。
+- 浏览器编辑器里的 grid 预览仍是 JS，看不到这个弹窗（设备端和 `/preview.png` 才有）。

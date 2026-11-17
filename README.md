@@ -25,6 +25,7 @@ renderer 在 **macOS（arm64）** 上也已实测可构建/出图/推帧（字�
 | 组件 | 时钟、时钟（表盘/LCD 数码管）、股票（A 股/美股/期货按时段自动切）、K 线、加密、GitHub、天气、电脑指标、Agent、RunCat、RunCat 条、音乐、倒计时、便签、资讯、假期倒计时、Home Assistant 概览 |
 | 自定义页面 | Rust `RustPage` 直接画整屏（示例：自选股 + 分时图，见 `renderer/src/pages/stock.rs`）；旧 JS 页面仅 kiosk 回退 |
 | Agent 状态 | 自动扫描本机 Pi / Claude Code / Codex / DeepSeek Harness 的会话，列表按「运行中 → 等待 → 结束」排序，可逐条隐藏；支持 Pi extension / Claude Code / Codex hooks 的精确状态和规则摘要标题，见 [`docs/agent-status.md`](docs/agent-status.md) |
+| 消息弹窗 | Agent 任务结束/异常时，屏幕顶部落下 iOS 风格通知横幅（App 图标 + 标题 + `任务完成 · 用时 3m`），弹性落下 → 停留 5 s → 缓慢淡出；叠在任何页面之上 |
 | 屏保 | 选视频（内置 `wallpaper.mp4`，也可用 `panel/add-screensaver.sh` 转自己的），手动播或锁屏自动播 |
 | 控屏 | 亮度（5–100）、待机/唤醒、设备状态回读 |
 | 喇叭 | 独立「音频播放」面板：任意格式（WAV / FLAC / M4A / OGG / 视频音轨…）→ ffmpeg 转 128 kbps MP3 再上传（≤4 MiB），音量 / 停止 / 播放自愈；固件只解 MP3，转码在主机侧，PLAY 撞到 BAD_STATE 会自动修音频路由后重试 |

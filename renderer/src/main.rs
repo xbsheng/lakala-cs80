@@ -3,6 +3,7 @@ mod canvas;
 mod data;
 mod layout;
 mod lunar;
+mod notify;
 mod pages;
 mod preview;
 mod push;
@@ -58,6 +59,12 @@ fn main() -> Result<()> {
     let fonts = Fonts::new();
     let theme = Theme::default();
     let mut assets = Assets::new();
+    // 顶部消息弹窗；CS80_NOTIFY_DEMO=1 启动就来一条，方便看动效。
+    let mut notifier = if env::var_os("CS80_NOTIFY_DEMO").is_some() {
+        notify::Notifier::demo()
+    } else {
+        notify::Notifier::new()
+    };
 
     if once {
         let page = layout.active_page();
@@ -107,7 +114,7 @@ fn main() -> Result<()> {
     loop {
         let started = Instant::now();
         let max_fps = fps.max(0.2);
-        let frame_time = if page_animated(&layout) {
+        let frame_time = if page_animated(&layout) || notifier.visible() {
             Duration::from_secs_f32(1.0 / max_fps)
         } else {
             Duration::from_secs(1)
@@ -142,8 +149,22 @@ fn main() -> Result<()> {
             None => empty_surface(&theme),
         };
         let mut surface = surface;
+        // 通知横幅叠在页面之上（屏保期间不画，随推帧一起停）。
+        if !saver_playing {
+            notifier.poll(&data.get(&notify::need()));
+            if notifier.visible() {
+                let mut c = Canvas2D::new(surface.canvas(), &fonts);
+                notifier.draw(&mut c, &theme, &mut assets);
+            }
+        }
         if let Some(f) = &preview_frame {
-            if last_preview_at.elapsed() >= Duration::from_secs(1) {
+            // 弹窗动画期间预览跟着 10 Hz 刷新，否则编辑器里看到的是跳帧。
+            let preview_every = if notifier.visible() {
+                Duration::from_millis(100)
+            } else {
+                Duration::from_secs(1)
+            };
+            if last_preview_at.elapsed() >= preview_every {
                 last_preview_at = Instant::now();
                 let png = encode_png(&mut surface);
                 if let Ok(mut g) = f.lock() { *g = png; }
