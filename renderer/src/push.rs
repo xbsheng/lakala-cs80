@@ -11,6 +11,9 @@ pub struct Push {
     host: String,
     agent: ureq::Agent,
     prev: Option<Vec<u16>>,
+    // 复用缓冲：每帧 4 MB 像素 + 2 MB BGR565 若重复分配，macOS malloc 不归还导致 RSS 翻倍。
+    scratch: Vec<u16>,
+    rgba: Vec<u8>,
 }
 
 impl Push {
@@ -22,6 +25,8 @@ impl Push {
             host: host.into().trim_end_matches('/').to_string(),
             agent,
             prev: None,
+            scratch: Vec::new(),
+            rgba: Vec::new(),
         }
     }
 
@@ -31,34 +36,31 @@ impl Push {
 
     /// 返回 true 表示 host 已接收（入队）。
     pub fn push(&mut self, surface: &mut Surface) -> bool {
-        let curr = bgr565(surface);
-        if self.prev.is_none() {
-            return self.full(surface, &curr);
-        }
-        let prev = self.prev.as_ref().unwrap();
-        let mut dirty = Vec::new();
-        for ty in 0..(HEIGHT / TILE_H) {
-            for tx in 0..(WIDTH / TILE_W) {
-                let mut changed = false;
-                'rows: for row in 0..TILE_H {
-                    let y = ty * TILE_H + row;
-                    let base = y * WIDTH + tx * TILE_W;
-                    if prev[base..base + TILE_W] != curr[base..base + TILE_W] {
-                        changed = true;
-                        break 'rows;
-                    }
-                }
-                if changed {
-                    dirty.push((tx, ty));
-                }
-            }
-        }
+        let mut curr = std::mem::take(&mut self.scratch);
+        curr.resize(WIDTH * HEIGHT, 0);
+        self.fill_bgr565(surface, &mut curr);
+
+        let Some(prev) = self.prev.take() else {
+            let ok = self.full(surface, &curr);
+            if ok { self.prev = Some(curr); } else { self.scratch = curr; }
+            return ok;
+        };
+
+        let dirty = diff(&prev, &curr);
         if dirty.is_empty() {
             self.prev = Some(curr);
+            self.scratch = prev;
             return true;
         }
         if dirty.len() > 120 {
-            return self.full(surface, &curr);
+            let ok = self.full(surface, &curr);
+            if ok {
+                self.prev = Some(curr);
+                self.scratch = prev;
+            } else {
+                self.scratch = curr;
+            }
+            return ok;
         }
 
         let mut body = Vec::with_capacity(4 + dirty.len() * (4 + TILE_W * TILE_H * 2));
@@ -77,22 +79,25 @@ impl Push {
         match self.post("/api/patch", &body) {
             Ok(true) => {
                 self.prev = Some(curr);
+                self.scratch = prev;
                 true
             }
             Ok(false) => {
                 self.prev = None;
+                self.scratch = curr;
                 false
             }
             Err(e) => {
                 eprintln!("push patch: {e}");
                 self.prev = None;
+                self.scratch = curr;
                 false
             }
         }
     }
 
     fn full(&mut self, surface: &mut Surface, curr: &[u16]) -> bool {
-        let rgb = rgb888(surface);
+        let rgb = self.rgb888(surface);
         match self.post("/api/frame", &rgb) {
             Ok(true) => {
                 self.prev = Some(curr.to_vec());
@@ -123,48 +128,82 @@ impl Push {
         }
         Ok(ok)
     }
-}
 
-fn rgba_bytes<'a>(surface: &'a mut Surface) -> (Vec<u8>, bool, usize) {
-    let image = surface.image_snapshot();
-    let pixmap = image.peek_pixels().expect("pixmap");
-    let info = pixmap.info();
-    let bytes = pixmap.bytes().expect("pixels").to_vec();
-    let bgra = matches!(info.color_type(), ColorType::BGRA8888);
-    (bytes, bgra, info.width() as usize)
-}
-
-fn bgr565(surface: &mut Surface) -> Vec<u16> {
-    let (bytes, bgra, width) = rgba_bytes(surface);
-    let mut out = vec![0u16; WIDTH * HEIGHT];
-    for i in 0..WIDTH * HEIGHT {
-        let p = i * 4;
-        let (r, g, b) = if bgra {
-            (bytes[p + 2], bytes[p + 1], bytes[p])
-        } else {
-            (bytes[p], bytes[p + 1], bytes[p + 2])
-        };
-        out[i] = (((b as u16) & 0xf8) << 8) | (((g as u16) & 0xfc) << 3) | ((r as u16) >> 3);
+    fn fill_rgba(&mut self, surface: &mut Surface) -> (bool, usize) {
+        let image = surface.image_snapshot();
+        let pixmap = image.peek_pixels().expect("pixmap");
+        let info = pixmap.info();
+        let bytes = pixmap.bytes().expect("pixels");
+        self.rgba.clear();
+        self.rgba.extend_from_slice(bytes);
+        let bgra = matches!(info.color_type(), ColorType::BGRA8888);
+        (bgra, info.width() as usize)
     }
-    let _ = width;
-    out
-}
 
-fn rgb888(surface: &mut Surface) -> Vec<u8> {
-    let (bytes, bgra, _) = rgba_bytes(surface);
-    let mut out = vec![0u8; WIDTH * HEIGHT * 3];
-    for i in 0..WIDTH * HEIGHT {
-        let p = i * 4;
-        let q = i * 3;
-        if bgra {
-            out[q] = bytes[p + 2];
-            out[q + 1] = bytes[p + 1];
-            out[q + 2] = bytes[p];
-        } else {
-            out[q] = bytes[p];
-            out[q + 1] = bytes[p + 1];
-            out[q + 2] = bytes[p + 2];
+    fn fill_bgr565(&mut self, surface: &mut Surface, out: &mut [u16]) {
+        let (bgra, _width) = self.fill_rgba(surface);
+        let bytes = &self.rgba;
+        for (i, px) in out.iter_mut().enumerate() {
+            let p = i * 4;
+            let (r, g, b) = if bgra {
+                (bytes[p + 2], bytes[p + 1], bytes[p])
+            } else {
+                (bytes[p], bytes[p + 1], bytes[p + 2])
+            };
+            *px = (((b as u16) & 0xf8) << 8) | (((g as u16) & 0xfc) << 3) | ((r as u16) >> 3);
         }
     }
-    out
+
+    fn rgb888(&mut self, surface: &mut Surface) -> Vec<u8> {
+        let (bgra, _) = self.fill_rgba(surface);
+        let bytes = &self.rgba;
+        let mut out = vec![0u8; WIDTH * HEIGHT * 3];
+        for i in 0..WIDTH * HEIGHT {
+            let p = i * 4;
+            let q = i * 3;
+            if bgra {
+                out[q] = bytes[p + 2];
+                out[q + 1] = bytes[p + 1];
+                out[q + 2] = bytes[p];
+            } else {
+                out[q] = bytes[p];
+                out[q + 1] = bytes[p + 1];
+                out[q + 2] = bytes[p + 2];
+            }
+        }
+        out
+    }
+}
+
+fn diff(prev: &[u16], curr: &[u16]) -> Vec<(usize, usize)> {
+    let mut dirty = Vec::new();
+    for ty in 0..(HEIGHT / TILE_H) {
+        for tx in 0..(WIDTH / TILE_W) {
+            for row in 0..TILE_H {
+                let y = ty * TILE_H + row;
+                let base = y * WIDTH + tx * TILE_W;
+                if prev[base..base + TILE_W] != curr[base..base + TILE_W] {
+                    dirty.push((tx, ty));
+                    break;
+                }
+            }
+        }
+    }
+    dirty
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_detects_changed_tile_only() {
+        let prev = vec![0u16; WIDTH * HEIGHT];
+        let mut curr = prev.clone();
+        curr[0] = 1; // 左上角第一个 tile
+        assert_eq!(diff(&prev, &curr), vec![(0, 0)]);
+        assert!(diff(&prev, &prev).is_empty());
+        curr[5 * TILE_H * WIDTH + 5 * TILE_W] = 1;
+        assert_eq!(diff(&prev, &curr), vec![(0, 0), (5, 5)]);
+    }
 }
