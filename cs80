@@ -53,7 +53,7 @@ start_host() {
     return 0
   fi
   [ -x "$ROOT/panel/qdc1" ] || ensure_sidecar || echo "warning: sidecar 编译失败，屏不会亮（只有编辑器）"
-  nohup python3 "$ROOT/panel/host.py" --port "$HOST_PORT" "$@" \
+  nohup python3 -u "$ROOT/panel/host.py" --port "$HOST_PORT" "$@" \
     >"$LOG/host.log" 2>&1 &
   echo $! >"$RUN/host.pid"
   i=0
