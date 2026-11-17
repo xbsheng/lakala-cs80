@@ -12,11 +12,13 @@ use crate::data::Need;
 use crate::theme::Theme;
 
 const CARD_W: f32 = 736.0;
-const CARD_H: f32 = 156.0;
+const CARD_H: f32 = 166.0;
 const CARD_X: f32 = 32.0;
 const CARD_Y: f32 = 26.0;
 const RADIUS: f32 = 44.0;
 const PAD: f32 = 26.0;
+const PAD_V: f32 = 24.0;
+const ICON: f32 = 40.0;
 const IN_MS: f32 = 380.0;
 const HOLD_MS: f32 = 5000.0;
 const OUT_MS: f32 = 560.0;
@@ -172,9 +174,9 @@ impl Notifier {
         c.stroke_rrect(card, RADIUS);
 
         // 第一行：App 图标 + App 名 + 右侧时间
-        let icon = 44.0;
+        let icon = ICON;
         let ix = CARD_X + PAD;
-        let cy = y + 52.0;
+        let cy = y + PAD_V + icon / 2.0;
         if !assets.draw_logo(c, &b.agent, ix, cy - icon / 2.0, icon, icon) {
             c.set_fill(Color::from_argb(0x2e, 0xff, 0xff, 0xff));
             c.fill_rrect(Rect::from_xywh(ix, cy - icon / 2.0, icon, icon), 12.0);
@@ -188,12 +190,12 @@ impl Notifier {
         c.set_align(Align::Left);
         c.set_baseline(Baseline::Middle);
         c.set_fill(t.fg3);
-        c.set_font(23.0, 600, false);
+        c.set_font(21.0, 600, false);
         let app = c.ellipsis(&b.app, CARD_W * 0.5);
         c.tracked_text(&app, ix + icon + 14.0, cy + 1.0, 1.6);
         c.set_align(Align::Right);
         c.set_fill(t.fg4);
-        c.set_font(21.0, 400, false);
+        c.set_font(20.0, 400, false);
         c.fill_text("刚刚", CARD_X + CARD_W - PAD, cy + 1.0);
 
         // 标题 + 正文
@@ -201,12 +203,12 @@ impl Notifier {
         c.set_align(Align::Left);
         c.set_baseline(Baseline::Top);
         c.set_fill(t.fg);
-        c.set_font(32.0, 600, false);
+        c.set_font(26.0, 600, false);
         let title = c.ellipsis(&b.title, text_w);
-        c.fill_text(&title, CARD_X + PAD, y + 84.0);
+        c.fill_text(&title, CARD_X + PAD, y + PAD_V + ICON + 16.0);
         c.set_fill(t.fg3);
-        c.set_font(27.0, 400, false);
-        c.fill_text(&b.body, CARD_X + PAD, y + 122.0);
+        c.set_font(23.0, 400, false);
+        c.fill_text(&b.body, CARD_X + PAD, y + PAD_V + ICON + 52.0);
         c.restore();
     }
 }
