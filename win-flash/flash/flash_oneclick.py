@@ -10,6 +10,7 @@
     py\\python.exe flash_oneclick.py --dry-run     # 只诊断 + 打印计划，不动设备
     py\\python.exe flash_oneclick.py --no-backup   # 不做整片备份（不建议）
     py\\python.exe flash_oneclick.py --app <bin>   # 换固件（如 0.3.1）
+    py\\python.exe flash_oneclick.py --pclk 100    # 不打 dsi_pclk 补丁（保持原厂时钟）
 
 按设备当前状态自动选路（每一步都可重入，中途失败重跑即可）：
 
@@ -50,6 +51,7 @@ import serial.tools.list_ports as lp
 
 import appimg
 import dump_flash as df
+import patch_pclk
 from third_party.sprdflash import native, protocol as sp
 from third_party.sprdflash.flasher import DEFAULT_CHUNK, send_stage
 
@@ -477,6 +479,8 @@ def main():
     ap.add_argument("--no-backup", action="store_true", help="降级前不做整片备份（不建议）")
     ap.add_argument("--force", action="store_true", help="设备已是 QDisplay 也强制重刷")
     ap.add_argument("--app", default=DEFAULT_APP, help="APP 固件 bin（默认 0.3.0）")
+    ap.add_argument("--pclk", type=int, default=200,
+                    help="DSI 像素时钟 dsi_pclk_rate（默认 200，修中间灰闪；100 = 保持原厂）")
     args = ap.parse_args()
 
     os.makedirs(DUMPS, exist_ok=True)
@@ -491,11 +495,22 @@ def main():
         if not os.path.exists(path):
             log("✗ 缺文件：%s（%s）" % (path, desc))
             return 1
-    app_data = open(args.app, "rb").read()
+    app_data = src_data = open(args.app, "rb").read()
     if not appimg.check(app_data):
         log("✗ %s 的 APP2 头 CRC32 不对（手改过？先跑 appimg.fix）" % args.app)
         return 1
     log("固件：%s  %d B  APP2 CRC ok" % (os.path.basename(args.app), len(app_data)))
+    try:
+        app_data, site = patch_pclk.patch(src_data, args.pclk)
+    except ValueError as exc:
+        log("⚠ 没打 dsi_pclk 补丁（%s），按原值刷" % exc)
+    else:
+        old = src_data[site]
+        if old == args.pclk:
+            log("dsi_pclk_rate = %d（已是目标值，不改）" % old)
+        else:
+            log("dsi_pclk_rate %d → %d（偏移 0x%x，修中间灰闪 issue #4；--pclk 100 关闭）"
+                % (old, args.pclk, site))
 
     apps_running = stop_panel_apps(args.yes, args.dry_run)
 

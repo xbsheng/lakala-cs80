@@ -122,12 +122,18 @@ py\python.exe dump_flash.py --restore ..\..\dumps\full_flash_0x60000000_8MiB_<sh
 
 ```bat
 一键刷机.cmd                              :: 双击即可（首次会自动解压便携 Python）
+一键刷机.cmd --pclk 100                   :: 同一套流程，但保持原厂 dsi_pclk_rate
 cd win-flash\flash
 py\python.exe flash_oneclick.py --dry-run  :: 只诊断 + 打印计划，不动设备
 py\python.exe flash_oneclick.py            :: 刷（刷前确认一次）
 py\python.exe flash_oneclick.py --yes      :: 全自动（不确认）
 py\python.exe flash_oneclick.py --force    :: 已刷过也强制重刷
+py\python.exe flash_oneclick.py --pclk 100 :: 不打 dsi_pclk 补丁（保持原厂 100）
 ```
+
+**刷进去的 APP 默认已经把 `dsi_pclk_rate` 打到 200**（刷写前在内存里打补丁，不动仓库里的 bin），
+用来修「白/黑不闪、中间灰闪」（issue #4）；日志里会有一行 `dsi_pclk_rate 100 → 200`。
+想保持原厂时钟就加 `--pclk 100`；指纹对不上（未知固件版本）时只警告、按原值刷，不会中止。
 
 | 设备状态 | 脚本动作 | 耗时 |
 |---|---|---|
@@ -302,8 +308,9 @@ py\python.exe qdisplay_app.py qdisplay_native_pclk200.bin --auto
   `movs #imm8` 上限就是 255，脚本拒绝 0 和 >255。
 - 改前先刷回「什么都没改的原 bin」做对照，观察时**用 `panel/flicker_probe.py --hz 0` 推静止纯色**
   （host 周期性 patch 会在单缓冲屏上留撕裂，干扰判断）。
-- 发布固件默认不改：目前只有 0.3.0 系（含派生镜像）+ 两块屏的实测，pclk 翻倍对功耗 / EMI /
-  长时可靠性没有数据。
+- **一键刷机默认打这个补丁**（`flash_oneclick.py --pclk 200`，默认值；`--pclk 100` 关掉），
+  仓库里的原 bin 不动，只刷机时在内存里改。目前只有 0.3.0 系（含派生镜像）+ 两块屏的实测，
+  pclk 翻倍对功耗 / EMI / 长时可靠性没有数据 —— 要改默认值得先补这三项。
 
 ## 3. 刷完怎么算成功
 
