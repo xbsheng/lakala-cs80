@@ -57,6 +57,40 @@ FINGERPRINT = bytes.fromhex("2b603c22")
 OPCODE_MOVS_R3 = 0x23
 
 
+def patch(data, rate=DEFAULT_RATE):
+    """把 `dsi_pclk_rate` 改成 rate，返回 (新 bytes, 字节偏移)。改不了就 raise ValueError。
+
+    已经是 rate 时原样返回（不重算 CRC）。flash_oneclick.py 也走这个函数。
+    """
+    if not 1 <= rate <= 255:
+        raise ValueError("pclk 只能是 1..255（`movs #imm8` 的上限就是 255）")
+    data = bytearray(data)
+    # 容器 magic 是 u32 0x41505032，落在文件里就是 ASCII "2PPA"
+    if data[:4] not in (b"2PPA", b"APP2"):
+        raise ValueError("不是 APP2 容器（magic 不是 0x41505032）")
+    declared = int.from_bytes(data[4:8], "little")
+    if declared != len(data):
+        raise ValueError("容器长度字段 %d != 文件长度 %d" % (declared, len(data)))
+    hits = []
+    pos = data.find(FINGERPRINT)
+    while pos >= 0:
+        hits.append(pos)
+        pos = data.find(FINGERPRINT, pos + 1)
+    if len(hits) != 1:
+        raise ValueError("mipi_init 常量块指纹命中 %d 处（%s），不敢猜"
+                         % (len(hits), [hex(h) for h in hits]))
+    site = hits[0] + len(FINGERPRINT)          # → movs r3,#imm8 的 imm8 字节
+    if data[site + 1] != OPCODE_MOVS_R3:
+        raise ValueError("补丁点后面不是 movs r3,#imm8（%s），固件版本不匹配"
+                         % data[site:site + 2].hex())
+    if data[site] == rate:
+        return bytes(data), site
+    data[site] = rate
+    out = bytes(appimg.fix(data))      # ★ APP2 头部 u32@8 = 整文件 CRC32，必须重算
+    assert appimg.check(out)
+    return out, site
+
+
 def main():
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
@@ -73,37 +107,15 @@ def main():
         except ValueError:
             print("pclk 必须是整数：%s" % args[1])
             return 2
-    if not 1 <= rate <= 255:
-        print("pclk 只能是 1..255（`movs #imm8` 的上限就是 255）")
-        return 2
-
-    data = bytearray(open(src, "rb").read())
-
-    # 容器 magic 是 u32 0x41505032，落在文件里就是 ASCII "2PPA"
-    if data[:4] not in (b"2PPA", b"APP2"):
-        print("不是 APP2 容器（magic 不是 0x41505032）：%s" % src)
-        return 1
-    declared = int.from_bytes(data[4:8], "little")
-    if declared != len(data):
-        print("容器长度字段 %d != 文件长度 %d，拒绝处理" % (declared, len(data)))
-        return 1
+    data = open(src, "rb").read()
     if not appimg.check(data):
         print("注意：输入 bin 自己的 crc32@8 就不对（可能是别人改过又没重算），先确认来源。")
     print("输入：%s  %d B  sha256=%s" % (src, len(data), hashlib.sha256(data).hexdigest()))
 
-    hits = []
-    pos = data.find(FINGERPRINT)
-    while pos >= 0:
-        hits.append(pos)
-        pos = data.find(FINGERPRINT, pos + 1)
-    if len(hits) != 1:
-        print("mipi_init 常量块指纹命中 %d 处（%s），不敢猜，放弃"
-              % (len(hits), [hex(h) for h in hits]))
-        return 1
-    site = hits[0] + len(FINGERPRINT)          # → movs r3,#imm8 的 imm8 字节
-    if data[site + 1] != OPCODE_MOVS_R3:
-        print("补丁点后面不是 movs r3,#imm8（%s），固件版本不匹配，放弃"
-              % data[site:site + 2].hex())
+    try:
+        out, site = patch(data, rate)
+    except ValueError as exc:
+        print("%s，放弃" % exc)
         return 1
     old = data[site]
     print("补丁点：文件偏移 0x%x（虚拟地址 0x%x）  dsi_pclk_rate = %d → %d"
@@ -114,17 +126,14 @@ def main():
     if old != 100:
         print("注意：原值不是 100（是 %d），可能是别人改过的固件，按你的要求继续。" % old)
 
-    data[site] = rate
-    data = appimg.fix(data)      # ★ APP2 头部 u32@8 = 整文件 CRC32，必须重算，否则 APP 不启动
-    assert appimg.check(data)
     dst = os.path.splitext(src)[0] + "_pclk%d.bin" % rate
-    open(dst, "wb").write(bytes(data))
+    open(dst, "wb").write(out)
 
-    diff = [i for i, (a, b) in enumerate(zip(bytes(data), open(src, "rb").read())) if a != b]
+    diff = [i for i, (a, b) in enumerate(zip(out, data)) if a != b]
     print("差异字节：%s（应为 0x%x + crc32@0x8..0xb，共 5 字节）"
           % (["0x%x" % i for i in diff], site))
     print("输出：%s  %d B  crc32@8=%08x(ok)  sha256=%s"
-          % (dst, len(data), appimg.stored(data), hashlib.sha256(data).hexdigest()))
+          % (dst, len(out), appimg.stored(out), hashlib.sha256(out).hexdigest()))
     print("刷写：py\\python.exe qdisplay_app.py %s --auto" % os.path.basename(dst))
     print("回退：py\\python.exe qdisplay_app.py %s --auto" % os.path.basename(src))
     return 0
