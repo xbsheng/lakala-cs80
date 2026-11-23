@@ -289,6 +289,12 @@ py\python.exe qdisplay_app.py qdisplay_native_pclk200.bin --auto
 
 脚本按字节指纹 `2b 60 3c 22`（`str r3,[r5]` + `movs r2,#60`）定位，命中数必须唯一、后一字节必须
 是 `0x23`（`movs r3,#imm8` 的 opcode），然后只改 imm8、重算 APP2 头部 CRC32（见 1.5）。
+因为不认 sha、只认指纹，**对已经改过其它部分的派生镜像同样适用**（例如已换过等待页的
+`qdisplay_native_wait.bin`）：先 `dump_flash.py --addr 0x60260000 --size 0xCE000` 把机器上
+**当前的** APP 读出来，在它上面打补丁，就不会顺手回退掉别的改动。
+
+> 实测过两种起点：原厂 0.3.0，以及一台已经刷过 `qdisplay_native_wait.bin`（静态等待页）的
+> 派生镜像 —— 两台都是 154400 B / `features=0x23f`，改后中间灰闪都消失。
 
 注意：
 
@@ -296,7 +302,8 @@ py\python.exe qdisplay_app.py qdisplay_native_pclk200.bin --auto
   `movs #imm8` 上限就是 255，脚本拒绝 0 和 >255。
 - 改前先刷回「什么都没改的原 bin」做对照，观察时**用 `panel/flicker_probe.py --hz 0` 推静止纯色**
   （host 周期性 patch 会在单缓冲屏上留撕裂，干扰判断）。
-- 发布固件默认不改：目前只有 0.3.0 + 一块屏的实测，pclk 翻倍对功耗 / EMI / 长时可靠性没有数据。
+- 发布固件默认不改：目前只有 0.3.0 系（含派生镜像）+ 两块屏的实测，pclk 翻倍对功耗 / EMI /
+  长时可靠性没有数据。
 
 ## 3. 刷完怎么算成功
 
