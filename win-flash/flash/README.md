@@ -9,6 +9,7 @@
 | **`flash_oneclick.py`** | **一键刷机**：判代次 →（R05 先整片备份 + 刷 `fw.pac` 降级）→ 写 APP → 验证 QDC1。仓库根目录的 `一键刷机.cmd` 是它的双击入口（首次自动解压便携 Python + 装 pyserial）。详见 [`../../docs/firmware.md`](../../docs/firmware.md) §0.6 |
 | **`qdisplay_app.py`** | 把 **QDisplay native APP** 写到 `0x60260000`（**只写 APP 分区**，不格式化、不动 NV）。当前设备就是这个状态 |
 | **`patch_waiting_page.py`** | 给 0.3.1+ 的 `qdisplay_native.bin` 打 1 字节补丁：**关掉「等待连接」页每秒重绘**（倒计时），打完后等待页真静态。0.3.0 bin 会直接报「不用打补丁」，详见 [`../../docs/firmware.md`](../../docs/firmware.md) 的「2.5 关掉等待页每秒重绘」 |
+| **`patch_pclk.py`** | 给 0.3.0 / 0.3.1 的 `qdisplay_native.bin` 改 `dsi_pclk_rate`（默认 100 → 200）：修复「白/黑不闪、中间灰闪」（issue #4）。只改 1 字节 + 重算 APP2 CRC32，详见 [`../../docs/firmware.md`](../../docs/firmware.md) 的「2.6」 |
 | **`appimg.py`** | APP2 容器头 `u32@8 = crc32(整文件)` 的重算/校验 —— **手改任何字节后必须重算**，否则 loader 不启动 APP（屏黑、COM15 无应答、AT 口正常） |
 | **`reset_download.py`** | 设备卡在下载模式（`PDL connect` 超时，其实 FDL2 还在跑）时走 BSL 发 `NORMAL_RESET` 重启，不用拔插 |
 | **`flash_at.py`** | 按 `fw.pac` **整包刷 QuecPython**（含格式化文件系统 + 重建 NV）。用于「恢复成 Python 环境」 |
