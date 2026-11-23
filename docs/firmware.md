@@ -260,6 +260,44 @@ py\python.exe qdisplay_app.py qdisplay_native_static.bin --auto
 脚本会先核 APP2 容器长度与字节指纹：本仓 0.3.0 的 154400 B bin **没有**倒计时那段代码，会直接报「不用打补丁」。
 如果屏上还闪，按 [`troubleshooting.md`](troubleshooting.md#屏闪) 的四步区分背光 PWM / 面板 / 供电。
 
+## 2.6 改 DSI 像素时钟 `dsi_pclk_rate`（中间灰闪烁，0.3.0 / 0.3.1 都适用）
+
+「白/黑不闪、中间灰闪」的开关就是 `mipi_init` 的最后一个常量。QDisplay 的 `mipi_init` 常量块
+（两个版本里逐字节相同）：
+
+| 文件偏移 | 字节 | 指令 | 含义 |
+|---|---|---|---|
+| 0x1678 | `14 21` | `movs r1,#20` | HSync |
+| 0x167a | `28 22` | `movs r2,#40` | HBP |
+| 0x167e | `03 23` | `movs r3,#3` | VSync |
+| 0x1680 | `0b 20` | `movs r0,#11` | VBP |
+| 0x1686 | `10 21` | `movs r1,#16` | VFP |
+| 0x168e | `3c 22` | `movs r2,#60` | FrameRate |
+| **0x1690** | **`64 23`** | **`movs r3,#100`** | **`dsi_pclk_rate`** |
+
+前 6 个值和 QuecPython 官方 `mipi_init(HSync=20, HBP=40, …, VFP=16, FrameRate=60)` 一致
+（见 `archive/quecpython/gen_panel.py`），第 7 个常量不进 QuecPython API，只有 QDisplay 的 native
+实现用得到 —— 社区实测（issue #4）确认它就是 `dsi_pclk_rate`：100 → 200 后中间灰闪基本消失。
+
+```bat
+cd win-flash\flash
+py\python.exe patch_pclk.py qdisplay_native.bin            :: 默认 200 → qdisplay_native_pclk200.bin
+py\python.exe patch_pclk.py qdisplay_native.bin 210        :: 换档
+py\python.exe qdisplay_app.py qdisplay_native_pclk200.bin --auto
+:: 回退：把原来的 qdisplay_native.bin 再刷一次
+```
+
+脚本按字节指纹 `2b 60 3c 22`（`str r3,[r5]` + `movs r2,#60`）定位，命中数必须唯一、后一字节必须
+是 `0x23`（`movs r3,#imm8` 的 opcode），然后只改 imm8、重算 APP2 头部 CRC32（见 1.5）。
+
+注意：
+
+- **不是越大越好**：issue #4 的扫描里 195 以下更差、220/240 又变差，**200~210** 是舒适区；
+  `movs #imm8` 上限就是 255，脚本拒绝 0 和 >255。
+- 改前先刷回「什么都没改的原 bin」做对照，观察时**用 `panel/flicker_probe.py --hz 0` 推静止纯色**
+  （host 周期性 patch 会在单缓冲屏上留撕裂，干扰判断）。
+- 发布固件默认不改：目前只有 0.3.0 + 一块屏的实测，pclk 翻倍对功耗 / EMI / 长时可靠性没有数据。
+
 ## 3. 刷完怎么算成功
 
 1. 屏上出现固件内置的「等待连接」页（几秒没有主机会显示）

@@ -159,7 +159,7 @@ py\python.exe qdisplay_app.py qdisplay_native_static.bin --auto
 本仓 `win-display/qdisplay/qdisplay_native.bin` 是 **0.3.0**（154400 B，`特性位 0x23f`），
 里面根本没有倒计时那段代码 → 脚本会直接告诉你「不用打补丁」。
 
-### 深挖：面板驱动 / MIPI 时序（实测进行中）
+### 深挖：面板驱动 / MIPI 时序（已定位：`dsi_pclk_rate`）
 
 亮度 100（`backlight=0`、`edges` 冻结）、DC 12V、等待页只提交一次，**屏上仍然闪**，
 纯色自检结果：
@@ -195,19 +195,47 @@ py\python.exe qdisplay_app.py qdisplay_native_static.bin --auto
    另外实测本固件 `submit_frame()` 每次 **≈98 ms**（≈10.2 Hz）——很像帧周期而不是 cache clean，
    如果真是帧周期，那屏实际只有 ~10 Hz 刷新，中间灰闪就说得通了。
 
-**这两条实验路线已经封档**（2026-11，本机实测）：
+**已封档的实验**（2026-11，本机实测）：
 
 | 试过 | 结果 |
 |---|---|
-| 把 MIPI 消隐换成原厂 R05 那套（120/140/140/113/140/156） | 刷进去能启动、但**面板锁不住 → 黑屏**；说明这颗 SoC 的 DSI PLL 不会按 `frame_rate+totals` 重算，这条路要么同时改 `dsi_pclk_rate`，要么放弃 |
+| 把 MIPI 消隐换成原厂 R05 那套（120/140/140/113/140/156） | 刷进去能启动、但**面板锁不住 → 黑屏**；说明这颗 SoC 的 DSI PLL 不会按 `frame_rate+totals` 重算 |
 | `frame_rate` 60 → 20 | 闪的节奏**变了（更快）**，证明闪跟随刷新率；但 255 是 `movs #imm8` 的上限，靠它压不住 |
 | 面板 init 的 8 个单字节变体（`B4`/`B6`/`BA[6]`/`E3`/`B1`/`CDh`/`BF`/`B8`） | 全部**没有区别**（仍然只有白色不闪），说明这些寄存器不是这个闪的开关 |
-| `dsi_pclk_rate` 100 → 50 | submit 耗时 98 → 95 ms，几乎不变 → 98 ms 是内存搬运，不是帧周期 |
+| `dsi_pclk_rate` 100 → 50 | 无效 —— **但这次测错了指标**，见下 |
 
-结论：**亮度 100（PWM 停）+ 12V 供电之后，剩下的中间灰闪属于面板本体（VCOM 走 OTP 校准，软件改不了）**。
-固件侧唯一真正落地的是「等待页换成纯黑纯白」（见 [`firmware.md`](firmware.md) 1.6，工具
-`make_waiting_page.py` + `patch_waiting_page_image.py`），因为纯黑/纯白不闪。想继续深挖只能重编固件
-（需要 Helios SDK + ARM GCC + 厂商 `dtools`，本仓没有）。
+#### 修复：`dsi_pclk_rate` 100 → 200（issue #4）
+
+~~得出结论：中间灰闪属于面板本体，VCOM 走 OTP，软件改不了~~ —— 至少在 **DSI 像素时钟**这个
+维度上是错的。真正的开关是 `mipi_init` 的最后一个常量 `dsi_pclk_rate`（QDisplay 私有参数，
+QuecPython 的 `mipi_init` 没对外暴露），文件偏移 `0x1690`，改 1 字节 + 重算 APP2 头部 CRC32：
+
+```bat
+cd win-flash\flash
+py\python.exe patch_pclk.py qdisplay_native.bin 200
+py\python.exe qdisplay_app.py qdisplay_native_pclk200.bin --auto
+:: 回退：把原来的 qdisplay_native.bin 再刷一次
+```
+
+旧结论错在两处：
+
+1. **只往下试了 100 → 50，从没往上试**。有效区间在 **200~210**；195 以下更差，220/240 又变差
+   （不是越大越好，`movs #imm8` 上限是 255）。
+2. **测的是 `submit_frame()` 耗时**，那是内存搬运，跟闪烁无关；该看的是**闪烁幅度**。
+
+本机复测（2026-11，0.3.0 = 154400 B，亮度 100 / `backlight=0` / 12V，`flicker_probe.py` 推
+静止纯色）：`#808080` 改前肉眼明显闪、改后看不出；`#c0c0c0` / `#ffffff` / `#000000` 同样静止
+都不再复现闪烁；`features` 仍是 `0x23f`，patch 耗时仍在 40~50 ms 区间（与改前同档）。
+
+0.3.1（155456 B）的 `mipi_init` 常量块逐字节相同，`patch_pclk.py` 能正常定位并出包
+（`0x1690` 同样是 `0x64`），但那版固件没有刷机实测。
+
+⚠️ 边界：只验证了 0.3.0 + 这一块屏；pclk 翻倍 = DSI 时钟翻倍，功耗 / EMI / 长时可靠性没有数据，
+所以**发布固件默认不改**，只提供可选脚本。物理上它更像把 SoC 的 DSI 扫描节奏挪进面板的舒适区
+（掩盖采样失配），不等于把 VCOM/OTP 的问题修好了 —— VCOM 那条结论仍然成立。
+
+固件侧另外落地的还是「等待页换成纯黑纯白」（见 [`firmware.md`](firmware.md) 1.6，工具
+`make_waiting_page.py` + `patch_waiting_page_image.py`），因为纯黑/纯白本来就不闪。
 
 ## 屏一直停在「等待连接」页，而且亮度调节窗反复弹出
 
